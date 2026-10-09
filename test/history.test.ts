@@ -21,6 +21,7 @@ test("打开 /history 时替换编辑器区域，不覆盖正在浏览的会话�
   assert.ok(searchLine > 0, "应渲染搜索框");
   assert.equal(stripAnsi(host.frame[searchLine - 1]).trim(), "", "搜索框上方应为空行");
   assert.equal(stripAnsi(host.frame[searchLine + 1]).trim(), "", "搜索框下方应为空行");
+  assert.equal(stripAnsi(host.frame[host.frame.length - 1]).trim(), "", "内容下方应为空行，与状态栏区分");
   host.press("\u001b");
   await command;
   assert.deepEqual(host.placements, ["inline"]);

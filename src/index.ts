@@ -182,9 +182,10 @@ class HistorySelector implements Component, Focusable {
     const showHint1 = height >= 8;
     const showHint2 = height >= 9;
     const showSearch = height >= 7;
-    const showBlank = height >= 11;
+    // 搜索框上下空行，以及内容与下方提示之间的空行。
+    const showGaps = height >= 11;
     const fixedLines = (showHeader ? 1 : 0) + (showHint1 ? 1 : 0) + (showHint2 ? 1 : 0)
-      + (showSearch ? 1 : 0) + (showBlank ? 2 : 0);
+      + (showSearch ? 1 : 0) + (showGaps ? 3 : 0);
     const listBudget = Math.max(1, height - fixedLines - 1);
     const preferredVisible = Math.max(5, Math.floor(height / 2));
     this.viewportHeight = Math.max(1, Math.min(preferredVisible, listBudget));
@@ -193,17 +194,18 @@ class HistorySelector implements Component, Focusable {
     if (showHeader) lines.push(this.renderHeader(width));
     if (showHint1) lines.push(truncateToWidth(this.hintLine1(), width, "…"));
     if (showHint2) lines.push(truncateToWidth(this.hintLine2(), width, "…"));
-    if (showBlank) lines.push("");
+    if (showGaps) lines.push("");
     if (showSearch) {
       for (const line of this.searchInput.render(width)) {
         lines.push(truncateToWidth(line, width, ""));
       }
     }
-    if (showBlank) lines.push("");
+    if (showGaps) lines.push("");
 
     const rows = this.nodes.map((node, index) => this.renderRow(node, index, width));
     if (!rows.length) {
       lines.push(this.theme.fg(this.failed ? "error" : "muted", this.emptyMessage()));
+      if (showGaps) lines.push("");
       return lines.map((line) => truncateToWidth(line, width, ""));
     }
     // 内容超出可用行数时，用一行展示原生风格的滚动位置。
@@ -216,6 +218,8 @@ class HistorySelector implements Component, Focusable {
     if (scrollable) {
       lines.push(this.theme.fg("muted", `  (${this.selected + 1}/${this.nodes.length})`));
     }
+    // 与下方的状态栏等内容留出一个空行作区分。
+    if (showGaps) lines.push("");
     return lines.map((line) => truncateToWidth(line, width, ""));
   }
 
