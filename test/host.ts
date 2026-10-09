@@ -31,6 +31,8 @@ export class HistoryHost {
   readonly notifications: { message: string; type?: string }[] = [];
   readonly switches: string[] = [];
   readonly frames: string[][] = [];
+  // 宿主如何呈现这次交互：inline 替换编辑器区域，overlay 覆盖在内容之上。
+  readonly placements: ("inline" | "overlay")[] = [];
   readonly terminal: { columns: number; rows: number };
   readonly keybindings: KeybindingsManager;
   readonly context: ExtensionCommandContext;
@@ -39,7 +41,10 @@ export class HistoryHost {
   lateOutput = false;
   theme = makeTheme();
   frame = ["Original editor"];
+  // 交互区域上方已存在的会话内容；overlay 会遮住它，inline 不会。
+  transcript: string[] = [];
   private component?: Component & { dispose?(): void };
+  private placement: "inline" | "overlay" = "inline";
   private cancelCustom?: () => void;
   private invalidated = false;
   private readonly events = new Map<string, (...args: any[]) => unknown>();
@@ -70,10 +75,15 @@ export class HistoryHost {
     history(api);
     const ui = strictAdapter({
       notify: (message: string, type?: string) => { this.notifications.push({ message, type }); },
-      custom: async <T>(factory: Parameters<ExtensionUIContext["custom"]>[0]): Promise<T> => {
+      custom: async <T>(
+        factory: Parameters<ExtensionUIContext["custom"]>[0],
+        customOptions?: Parameters<ExtensionUIContext["custom"]>[1],
+      ): Promise<T> => {
         assert.equal(options.mode ?? "tui", "tui", "非 TUI 不应创建终端界面");
         assert.notEqual(options.hasUI, false, "无 UI 时不应创建终端界面");
         assert.equal(this.component, undefined, "不能叠加未关闭的交互");
+        this.placements.push(customOptions?.overlay ? "overlay" : "inline");
+        this.placement = customOptions?.overlay ? "overlay" : "inline";
         const result = deferred<T>();
         let closed = false;
         const done = (value: unknown) => {
@@ -160,7 +170,11 @@ export class HistoryHost {
     this.publish();
   }
 
-  text(): string { return this.frame.map(stripAnsi).join("\n"); }
+  text(): string {
+    // overlay 画在会话内容上方，被遮住的内容不算可见。
+    const visible = this.component && this.placement === "overlay" ? [] : this.transcript;
+    return [...visible, ...this.frame].map(stripAnsi).join("\n");
+  }
 
   async waitFor(predicate: (text: string) => boolean): Promise<void> {
     if (predicate(this.text())) return;

@@ -37,6 +37,17 @@ def save_session(directory, cwd, session_id, name, marker, ago):
     return path
 
 
+def assert_replaces_editor(screen, mode):
+    """选择器应替换编辑器区域：按键提示行下方紧邻状态栏，而不是浮层遮在上面。"""
+    lines = screen.splitlines()
+    hint = next((index for index, line in enumerate(lines) if "up/down select" in line), None)
+    assert hint is not None, f"{mode} 未显示 /history 按键提示：\n{screen}"
+    tail = [line for line in lines[hint + 1:] if line.strip()]
+    assert tail, f"{mode} 按键提示后没有状态栏：\n{screen}"
+    assert " • " in tail[0], (
+        f"{mode} /history 没有替换编辑器区域，按键提示后的内容是：{tail[0]!r}\n{screen}")
+
+
 class TerminalHost:
     def __init__(self, socket, cwd, env, cli_options):
         self.socket = str(socket)
@@ -95,18 +106,22 @@ def check_interactive(host, mode, source):
     host.start(mode, "--session", str(source))
     host.wait(lambda screen: "SOURCE_TRANSCRIPT" in screen, f"{mode} 扩展正常加载")
     host.command("/history")
+    # 选择器替换编辑器区域，会话内容仍在上方可见；overlay 会把它遮住。
     host.wait(lambda screen: "History (Current Folder)" in screen and "History smoke target" in screen
-              and "Original smoke task" in screen and "Loading sessions" not in screen, f"{mode} 打开 /history")
+              and "Original smoke task" in screen and "SOURCE_TRANSCRIPT" in screen
+              and "Loading sessions" not in screen, f"{mode} 打开 /history 且会话内容仍可见")
+    assert_replaces_editor(host.screen(), mode)
     host.key("Down")
     host.wait(lambda screen: "› Original smoke task" in screen, f"{mode} 向下选择")
     host.key("Up")
     host.wait(lambda screen: "› History smoke target" in screen, f"{mode} 向上选择")
     host.key("Escape")
-    host.wait(lambda screen: "History (Current Folder)" not in screen, f"{mode} 取消 /history")
+    host.wait(lambda screen: "History (Current Folder)" not in screen and "SOURCE_TRANSCRIPT" in screen,
+              f"{mode} 取消 /history 并回到会话内容")
     host.session("smoke-source")
     host.command("/history")
-    host.wait(lambda screen: "› History smoke target" in screen and "Loading sessions" not in screen,
-              f"{mode} 再次打开 /history")
+    host.wait(lambda screen: "› History smoke target" in screen and "SOURCE_TRANSCRIPT" in screen
+              and "Loading sessions" not in screen, f"{mode} 再次打开 /history")
     host.key("Enter")
     host.wait(lambda screen: "TARGET_TRANSCRIPT" in screen and "History (Current Folder)" not in screen,
               f"{mode} 实际恢复目标会话")

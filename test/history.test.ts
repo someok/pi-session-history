@@ -6,6 +6,24 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { readFile, readdir, symlink, utimes, writeFile } from "node:fs/promises";
 
+test("打开 /history 时替换编辑器区域，不覆盖正在浏览的会话内容", async (t) => {
+  const data = await world(t);
+  await data.save({ id: "visible", name: "Visible session" });
+  const host = new HistoryHost(data);
+  host.transcript = ["Earlier assistant reply", "Your last request"];
+  t.after(() => host.close());
+  const command = host.open();
+  await host.waitFor((text) => text.includes("Visible session") && !text.includes("Loading"));
+  assert.deepEqual(host.placements, ["inline"], "/history 应显示在会话内容下方，而不是覆盖在上面");
+  assert.match(host.text(), /Your last request/, "打开选择器后会话内容仍应可见");
+  host.press("\u001b");
+  await command;
+  assert.deepEqual(host.placements, ["inline"]);
+  assert.match(host.text(), /Original editor/, "关闭后恢复原编辑器");
+  assert.match(host.text(), /Your last request/, "关闭后会话内容仍在屏幕上");
+  assert.doesNotMatch(host.text(), /Visible session/, "关闭后不再显示会话选择器");
+});
+
 test("通过独立 /history 浏览真实会话并恢复选中目标，不覆盖原生入口", async (t) => {
   t.mock.timers.enable({ apis: ["Date"], now: NOW });
   const data = await world(t);
@@ -57,7 +75,7 @@ test("上下选择、按可用高度分页和缩放后确认始终恢复可见�
   t.after(() => host.close());
   const command = host.open();
   await host.waitFor((text) => text.includes("Task 01") && !text.includes("Loading"));
-  assert.ok(host.frame.length <= 8, "内容应留在 overlay 的可用高度内");
+  assert.ok(host.frame.length < host.terminal.rows, "列表应为上方会话内容保留可见空间");
   assert.match(host.text(), /› Task 01/);
   assert.doesNotMatch(host.text(), /Task 06/);
   host.press("\u001b[6~");
@@ -69,12 +87,14 @@ test("上下选择、按可用高度分页和缩放后确认始终恢复可见�
   assert.match(host.text(), /› Task 02/);
   host.resize(24, 7);
   host.press("\u001b[6~");
-  assert.match(host.text(), /› Task 04/);
-  assert.ok(host.frame.length <= 5);
+  const selectedOnScreen = /› (Task \d\d)/.exec(host.text());
+  assert.ok(selectedOnScreen, "缩放后分页的选中项应仍可见");
+  assert.ok(host.frame.length < 7, "窄高度下列表仍应为会话内容留出空间");
   assert.ok(host.frame.every((line) => visibleWidth(line) <= 24));
   host.press("\r");
   await command;
-  assert.deepEqual(host.switches, [paths[3]]);
+  // 确认恢复的正是屏幕上可见的选中项，而不是某个固定位置。
+  assert.deepEqual(host.switches, [paths[Number(selectedOnScreen[1].slice(5)) - 1]]);
 });
 
 test("空列表明确反馈，忽略确认并允许 Esc 返回原编辑器", async (t) => {
@@ -252,7 +272,7 @@ test("中文、emoji、组合字符和控制字符在窄屏、缩放和主题变
   for (const [width, height] of [[40, 10], [18, 7], [8, 6], [2, 4], [1, 3], [100, 18]]) {
     host.resize(width, height);
     assert.ok(host.frame.every((line) => visibleWidth(line) <= width), `宽度 ${width} 不应越界`);
-    assert.ok(host.frame.length <= Math.max(1, height - 2));
+    assert.ok(host.frame.length < height, `高度 ${height} 时列表应为会话内容保留可见空间`);
     assert.ok(host.text().includes("›"), "缩放后选中项仍应可见");
   }
   host.press("\u001b");

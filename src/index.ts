@@ -85,11 +85,13 @@ export default function history(pi: ExtensionAPI): void {
               if (isSelected) line = theme.bg("selectedBg", line);
               return [truncateToWidth(line, width, "")];
             });
-            const height = Math.max(1, tui.terminal.rows - 2);
-            const header = height >= 3 ? [theme.bold("History (Current Folder)")] : [];
-            const footer = height >= 2 ? [theme.fg("dim", `${keybindings.getKeys("tui.select.up").join("/")}/${keybindings.getKeys("tui.select.down").join("/")} select · ${keybindings.getKeys("tui.select.pageUp").join("/")}/${keybindings.getKeys("tui.select.pageDown").join("/")} page · ${keybindings.getKeys("tui.select.confirm").join("/")} resume · ${keybindings.getKeys("tui.select.cancel").join("/")} cancel`)] : [];
-            const info = height >= 4 && sessions.length ? [theme.fg("muted", `${loadState === "loading" ? "Loading sessions... " : ""}(${selected + 1}/${sessions.length})`)] : [];
-            viewportHeight = height - header.length - footer.length - info.length;
+            // 与 pi 的树选择器口径一致：列表最多占终端高度一半，为上方会话内容留出可见空间。
+            const terminalHeight = Math.max(1, tui.terminal.rows);
+            const maxVisibleLines = Math.max(5, Math.floor(terminalHeight / 2));
+            const header = terminalHeight >= 5 ? [theme.bold("History (Current Folder)")] : [];
+            const footer = terminalHeight >= 4 ? [theme.fg("dim", `${keybindings.getKeys("tui.select.up").join("/")}/${keybindings.getKeys("tui.select.down").join("/")} select · ${keybindings.getKeys("tui.select.pageUp").join("/")}/${keybindings.getKeys("tui.select.pageDown").join("/")} page · ${keybindings.getKeys("tui.select.confirm").join("/")} resume · ${keybindings.getKeys("tui.select.cancel").join("/")} cancel`)] : [];
+            const info = terminalHeight >= 6 && sessions.length ? [theme.fg("muted", `${loadState === "loading" ? "Loading sessions... " : ""}(${selected + 1}/${sessions.length})`)] : [];
+            viewportHeight = Math.max(1, Math.min(maxVisibleLines, terminalHeight - header.length - footer.length - info.length - 1));
             let offset = 0;
             rowStarts = rows.map((row) => {
               const start = offset;
@@ -134,7 +136,7 @@ export default function history(pi: ExtensionAPI): void {
           invalidate(): void {},
           dispose: () => finish(),
         };
-      }, { overlay: true, overlayOptions: { width: "100%", maxHeight: "100%", margin: 1 } });
+      }, { overlay: false });
       if (target === undefined) return;
       const result = await ctx.switchSession(target);
       // 成功切换会使旧上下文失效；只有取消时仍可向原会话反馈。
