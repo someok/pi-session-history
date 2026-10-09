@@ -249,7 +249,7 @@ test("全文沿用预览的最后 user、技能简化与图片提示口径，无
   assert.equal(await readFile(images, "utf8"), before, "全文视图不修改也不另存会话内容");
 });
 
-test("全文超屏时上下键逐行、PageUp/PageDown 分页，缩放后重新排版且不越界", async (t) => {
+test("全文超屏时上下键逐行、PageUp/PageDown 与左右键分页，缩放后重新排版且不越界", async (t) => {
   const data = await world(t);
   await data.save({ id: "long", name: "Long task", activity: NOW - 2_000, messages: [
     user(numberedLines(40), NOW - 2_000),
@@ -291,6 +291,22 @@ test("全文超屏时上下键逐行、PageUp/PageDown 分页，缩放后重新�
   assert.match(host.text(), /\(34\/40\)/);
   for (let press = 0; press < 6; press++) host.press(PAGE_UP);
   assert.match(host.text(), /\(1\/40\)/, "回到顶部后继续 PageUp 不再滚动");
+
+  // ←/→ 与 PageUp/PageDown 等效，fullscreen 下也能到达组件。
+  assert.match(host.text(), /←\/→ page/, "全文提示说明左右键翻页");
+  host.press(RIGHT);
+  assert.deepEqual(messageLines(host), Array.from({ length: 6 }, (_, index) => `line-${String(index + 7).padStart(2, "0")}`),
+    "→ 向右翻一页");
+  assert.match(host.text(), /\(7\/40\)/);
+  host.press(LEFT);
+  assert.deepEqual(messageLines(host), Array.from({ length: 6 }, (_, index) => `line-${String(index + 1).padStart(2, "0")}`),
+    "← 向左翻一页");
+  assert.match(host.text(), /\(1\/40\)/);
+  host.press(LEFT);
+  assert.match(host.text(), /\(1\/40\)/, "到顶后继续 ← 不再滚动");
+  for (let press = 0; press < 6; press++) host.press(RIGHT);
+  assert.match(host.text(), /line-40/, "→ 可遍历到正文末尾");
+  assert.match(host.text(), /\(35\/40\)/, "到底后夹紧偏移");
   expectFits(host, 40, 12);
 
   host.press(ESCAPE);
@@ -355,7 +371,7 @@ test("全文只读：Enter、字符、删除与列表动作都不会改变界面
   host.press(CTRL_O);
   assert.match(host.text(), /Full message/);
   const view = [...host.frame];
-  for (const key of ["\r", "x", "\u007f", "\u0013", "\u000e", "\u0010", "\u0004", CTRL_O, RIGHT, LEFT, "\t", "\u0015"]) {
+  for (const key of ["\r", "x", "\u007f", "\u0013", "\u000e", "\u0010", "\u0004", CTRL_O, "\t", "\u0015"]) {
     host.press(key);
   }
   assert.deepEqual(host.frame, view, "只读视图按键不改变正文与界面");

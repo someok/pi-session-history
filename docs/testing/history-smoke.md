@@ -1,6 +1,6 @@
 # /history 测试与冒烟记录
 
-对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）与 [Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）。本记录只证明这六个切片，不代表父规格中重命名与删除等后续行为已经实现。
+对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）、[Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）与 [Issue #10](https://github.com/someok/pi-session-history/issues/10)（全文视图 `←`/`→` 翻页）。本记录只证明这七个切片，不代表父规格中重命名与删除等后续行为已经实现。
 
 ## 环境
 
@@ -95,6 +95,7 @@ npm pack --dry-run
 | 列表 `Ctrl+O` 直接打开选中会话全文，与是否已展开无关；切换选中项后操作对象正确 | 通过 |
 | 全文与预览使用同一最后 user、技能简化、图片提示口径；无 user、空正文与读取失败有一致的可退出反馈 | 通过 |
 | 正文不受 6 行上限；上下键逐行、`PageUp`/`PageDown` 分页，缩放后重新排版且可遍历到末尾 | 通过 |
+| 全文视图 `←`/`→` 上一页/下一页，步长与 PageUp/PageDown 一致，到顶/到底后夹紧；提示行显示 `←/→ page` | 通过 |
 | `Esc` 返回后搜索、范围、排序、筛选、选中、展开、焦点与可见位置逐行一致，之后 `Enter` 仍恢复该会话 | 通过 |
 | 全文只读：`Enter`、字符、删除与列表动作不改变界面、不恢复会话、不修改或另存正文 | 通过 |
 | 加载未完成也能打开全文并在原地补齐；返回后迟到结果不重开旧视图，切换选中项后重开显示新会话 | 通过 |
@@ -120,11 +121,11 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 
 本切片新增的原地预览也在两种模式下实测：fixture 的最后一条 user 消息包含 60 行 `SMOKE PREVIEW LINE`，打开 `/history` 后按 `→` 等待出现 `│ Isolated smoke request`、`1-6/61`、`Ctrl+O full message` 与 `→/← preview` 提示（长正文只显示 6 行正文加窗口范围与全文入口提示，消息体左侧带竖线），按 `←` 后提示消失，证明真实终端中的按键、竖线与截断渲染生效。普通模式还按 `PageDown`/`PageUp` 验证预览内翻页：`PageDown` 后提示变为 `7-12/61` 且选中项 `› History smoke target` 不变，`PageUp` 后回到 `1-6/61`；fullscreen 下分页按键被 alt-screen 接管（见下），因此只验证展开与提示。
 
-本切片新增的 `Ctrl+O` 全文视图同样在两种模式下实测：按 `Ctrl+O` 后等待出现 `Full message`、`Isolated smoke request`、`SMOKE PREVIEW LINE 20` 与 `(1/61)`，且第 60 行尚不可见（证明正文不再受 6 行上限并显示了位置提示）；普通模式按 `PageDown` 后第 60 行进入可见区，fullscreen 模式改用 `↓` 逐行滚动到同一行。在全文视图按 `Enter` 不会恢复会话，按 `Esc` 回到列表；后续步骤继续用原生 `/session` 验证恢复链路，确认只读视图未改变列表状态与恢复目标。
+本切片新增的 `Ctrl+O` 全文视图同样在两种模式下实测：按 `Ctrl+O` 后等待出现 `Full message`、`Isolated smoke request`、`SMOKE PREVIEW LINE 20` 与 `(1/61)`，且第 60 行尚不可见（证明正文不再受 6 行上限并显示了位置提示）；普通模式按 `PageDown` 后第 60 行进入可见区（`(26/61)`），再按 `PageUp` 回到首屏（`(1/61)`），`→`/`←` 也各自验证了一次；fullscreen 模式只用 `→` 翻到第 60 行、不再验证被 alt-screen 接管的 PageUp/PageDown。在全文视图按 `Enter` 不会恢复会话，按 `Esc` 回到列表；后续步骤继续用原生 `/session` 验证恢复链路，确认只读视图未改变列表状态与恢复目标。
 
 每次打开 `/history` 时还断言会话内容仍可见，且选择器从分隔横线、标题、提示、搜索框到列表直接延伸到状态栏、其间不混入会话正文。分隔横线与原生选择器同色（dark 主题下 accent `#a798d7`），已用带颜色的终端捕获比对；控件不替换编辑器区域（例如改回 `overlay`）时，会话正文会出现在选择器与状态栏之间，该断言失败。
 
-冒烟中发现一项宿主行为：fullscreen 模式下 pi 1.1.0 的 alt-screen 会在内联自定义组件之前消费 `PageUp`/`PageDown`（它们被绑定为原生会话视口滚动），因此内联的 /history 在 fullscreen 下收不到这两个键——原地预览无法翻页，全文视图只能用 `↑`/`↓` 遍历；普通 TUI 模式两个按键都可用。这与 `tui-alt-screen.js` 中 `tui.altScreen.pageUp` / `pageDown`「有意遮蔽未修改的编辑器绑定」一致；扩展没有修改 pi 安装，也无法在内联组件中阻止该键被视口消费，已在 README 注明该差异。
+冒烟中发现一项宿主行为：fullscreen 模式下 pi 1.1.0 的 alt-screen 会在内联自定义组件之前消费 `PageUp`/`PageDown`（它们被绑定为原生会话视口滚动），因此内联的 /history 在 fullscreen 下收不到这两个键——原地预览无法翻页，全文视图改用 `←`/`→` 翻页（`↑`/`↓` 仍逐行滚动）；普通 TUI 模式两个按键都可用。这与 `tui-alt-screen.js` 中 `tui.altScreen.pageUp` / `pageDown`「有意遮蔽未修改的编辑器绑定」一致；扩展没有修改 pi 安装，也无法在内联组件中阻止该键被视口消费，已在 README 注明该差异。
 
 ### 隔离与清理
 

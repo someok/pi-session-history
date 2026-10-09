@@ -578,7 +578,7 @@ class HistorySelector implements Component, Focusable {
   }
 
   /**
-   * 全文视图为只读：只接受滚动与返回；Enter、字符及其它列表动作都不会
+   * 全文视图为只读：只接受滚动、翻页与返回；Enter、字符及其它列表动作都不会
    * 修改正文、删除会话或触发会话恢复。
    */
   private handleFullViewInput(data: string): void {
@@ -596,6 +596,16 @@ class HistorySelector implements Component, Focusable {
       return;
     }
     if (kb.matches(data, "tui.select.pageDown")) {
+      this.scrollFullMessage(this.fullPageRows);
+      return;
+    }
+    // ←/→ 与 PageUp/PageDown 等效；fullscreen 下 alt-screen 会先消费
+    // PageUp/PageDown，内联组件只能用这两个固定按键翻页。
+    if (matchesKey(data, "left")) {
+      this.scrollFullMessage(-this.fullPageRows);
+      return;
+    }
+    if (matchesKey(data, "right")) {
       this.scrollFullMessage(this.fullPageRows);
       return;
     }
@@ -832,11 +842,11 @@ class HistorySelector implements Component, Focusable {
     return content.length ? content : [this.theme.fg("muted", EMPTY_MESSAGE)];
   }
 
-  /** 全文视图提示：滚动与返回；其它按键在只读视图中不生效。 */
+  /** 全文视图提示：滚动、翻页与返回；其它按键在只读视图中不生效。 */
   private fullHintLine(): string {
     const separator = this.theme.fg("muted", " · ");
     return this.keyHint("tui.select.up", "scroll")
-      + separator + this.keyHint("tui.select.pageUp", "page")
+      + separator + this.theme.fg("dim", "←/→") + this.theme.fg("muted", " page")
       + separator + this.keyHint("tui.select.cancel", "back");
   }
 

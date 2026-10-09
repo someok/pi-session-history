@@ -145,8 +145,8 @@ def check_interactive(host, mode, source):
     host.key("Left")
     host.wait(lambda screen: "│ Isolated smoke request" not in screen, f"{mode} ← 收起消息预览")
     # Ctrl+O 直接打开只读全文：正文占满高度，可遍历超出 6 行预览的第 60 行。
-    # fullscreen 下 pi 1.1.0 的 alt-screen 会先消费 PageUp/PageDown 去滚动会话视口，
-    # 内联组件收不到这两个键；用 ↑/↓ 验证同一正文仍可完整遍历。
+    # 普通模式同时验证 PageUp/PageDown 与 ←/→；fullscreen 下 alt-screen 会先消费
+    # PageUp/PageDown，因此只用 ←/→ 验证同一正文仍可完整遍历。
     host.key("C-o")
     host.wait(lambda screen: "Full message" in screen and "Isolated smoke request" in screen
               and "SMOKE PREVIEW LINE 20" in screen and "SMOKE PREVIEW LINE 60" not in screen
@@ -154,12 +154,19 @@ def check_interactive(host, mode, source):
               f"{mode} Ctrl+O 打开全文并显示超出预览范围的正文")
     if mode == "regular":
         host.key("PageDown")
-        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen,
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen and "(26/61)" in screen,
                   f"{mode} 全文 PageDown 可遍历超屏内容")
+        host.key("PageUp")
+        host.wait(lambda screen: "(1/61)" in screen, f"{mode} 全文 PageUp 回到首屏")
+        host.key("Right")
+        host.wait(lambda screen: "(26/61)" in screen, f"{mode} 全文 → 翻页可用")
+        host.key("Left")
+        host.wait(lambda screen: "(1/61)" in screen, f"{mode} 全文 ← 翻页可用")
     else:
-        host.key(*["Down"] * 40)
-        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen,
-                  f"{mode} 全文 ↓ 可遍历超屏内容（alt-screen 接管了 PageUp/PageDown）")
+        # fullscreen 下 alt-screen 会先消费 PageUp/PageDown；←/→ 翻页仍可用。
+        host.key("Right")
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen and "(26/61)" in screen,
+                  f"{mode} 全文 → 可遍历超屏内容（alt-screen 接管了 PageUp/PageDown）")
     # 只读：Enter 不恢复会话；Esc 返回列表；后续步骤继续验证恢复链路。
     host.key("Enter")
     host.key("Escape")
