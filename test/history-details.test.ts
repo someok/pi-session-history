@@ -49,7 +49,7 @@ function rowLines(host: HistoryHost, title: string): [string, string] {
   return [stripAnsi(host.frame[index]), stripAnsi(host.frame[index + 1] ?? "<缺失>")];
 }
 
-test("每条会话默认两行，第二行按消息数、model、provider 展示增强信息", async (t) => {
+test("每条会话默认两行，第二行按消息数、provider/model 展示增强信息", async (t) => {
   const data = await world(t);
   await data.save({
     id: "mixed",
@@ -71,7 +71,7 @@ test("每条会话默认两行，第二行按消息数、model、provider 展示
 
   const [titleLine, infoLine] = rowLines(host, "Mixed session");
   assert.doesNotMatch(titleLine, /msgs/, "第一行不应再显示消息数");
-  assert.match(infoLine, /4 msgs · claude-sonnet-4 · anthropic/, "第二行应按消息数、model、provider 顺序展示");
+  assert.match(infoLine, /4 msgs · anthropic\/claude-sonnet-4/, "第二行应展示消息数与 provider/model");
   assert.equal(host.text().match(/msgs/g)?.length, 1, "消息数不应重复显示");
   const selectedInfoLine = host.frame[host.frame.findIndex((line) => stripAnsi(line).includes("› Mixed session")) + 1];
   assert.ok(selectedInfoLine.includes(host.theme.getBgAnsi("selectedBg")), "选中项的第二行也应使用选中背景");
@@ -124,7 +124,7 @@ test("消息数只统计全历史 user + assistant，含分支、compaction 前�
   await host.waitFor((text) => text.includes("7 msgs"));
 
   const [, infoLine] = rowLines(host, "Branched session");
-  assert.match(infoLine, /7 msgs · branch-model · branch-provider/,
+  assert.match(infoLine, /7 msgs · branch-provider\/branch-model/,
     "应计入全历史 user + assistant（含分支与 compaction 前），并按记录顺序取最后一条 assistant");
 
   host.press("\u001b");
@@ -180,20 +180,20 @@ test("最后回复模型取记录顺序最后一条 assistant，错误/中止不
   const host = new HistoryHost({ ...data, columns: 120, rows: 40 });
   t.after(() => host.close());
   const command = host.open();
-  await host.waitFor((text) => text.includes("0 msgs") && text.includes("2 msgs · claude-sonnet-4 · anthropic")
+  await host.waitFor((text) => text.includes("0 msgs") && text.includes("2 msgs · anthropic/claude-sonnet-4")
     && !text.includes("Loading details"));
 
-  assert.match(rowLines(host, "Waiting for model B")[1], /3 msgs · model-a · provider-a/,
+  assert.match(rowLines(host, "Waiting for model B")[1], /3 msgs · provider-a\/model-a/,
     "后续选择 model B 但尚未产生回复时仍显示最后一次回复的模型");
-  assert.match(rowLines(host, "Virtual router")[1], /2 msgs · claude-sonnet-4 · anthropic/,
+  assert.match(rowLines(host, "Virtual router")[1], /2 msgs · anthropic\/claude-sonnet-4/,
     "虚拟模型场景应使用 assistant 记录的实际 provider/model");
-  assert.match(rowLines(host, "Failed last reply")[1], /4 msgs · model-bad · provider-bad/,
+  assert.match(rowLines(host, "Failed last reply")[1], /4 msgs · provider-bad\/model-bad/,
     "报错的最后一条 assistant 不回退到更早的成功回复");
-  assert.match(rowLines(host, "Aborted last reply")[1], /3 msgs · model-stopped · provider-stopped/,
+  assert.match(rowLines(host, "Aborted last reply")[1], /3 msgs · provider-stopped\/model-stopped/,
     "中止的最后一条 assistant 不回退到更早的成功回复");
   assert.match(rowLines(host, "No assistant yet")[1], /2 msgs · No assistant message/);
-  assert.match(rowLines(host, "Partial metadata")[1], /2 msgs · model-x · unknown/);
-  assert.match(rowLines(host, "Missing metadata")[1], /2 msgs · unknown · unknown/);
+  assert.match(rowLines(host, "Partial metadata")[1], /2 msgs · unknown\/model-x/);
+  assert.match(rowLines(host, "Missing metadata")[1], /2 msgs · unknown\/unknown/);
   assert.match(rowLines(host, "Empty history")[1], /0 msgs · No assistant message/,
     "真实零消息与未就绪的加载态不同");
 
@@ -223,7 +223,7 @@ test("增强信息未就绪时显示加载态，就绪后才替换为真实数�
     "加载态不得用 0、unknown 或无消息冒充最终结果");
 
   gate.resolve();
-  await host.waitFor((text) => text.includes("2 msgs · gpt-4.1-mini · openai"));
+  await host.waitFor((text) => text.includes("2 msgs · openai/gpt-4.1-mini"));
   host.press("\u001b");
   await command;
 });
@@ -243,11 +243,11 @@ test("单条增强信息读取失败只标记该项，其他会话仍可选择�
   t.after(() => host.close());
   const command = host.open();
   await host.waitFor((text) => text.includes("Could not load session details")
-    && text.includes("2 msgs · gpt-4.1-mini · openai"));
+    && text.includes("2 msgs · openai/gpt-4.1-mini"));
 
   assert.match(rowLines(host, "Broken session")[1], /Could not load session details/,
     "失败的会话只标记自己");
-  assert.match(rowLines(host, "Good session")[1], /2 msgs · gpt-4.1-mini · openai/,
+  assert.match(rowLines(host, "Good session")[1], /2 msgs · openai\/gpt-4.1-mini/,
     "同批会话不受单条失败影响");
 
   host.press("\r");
@@ -296,7 +296,7 @@ test("关闭后中止读取且迟到结果不更新旧界面，重新打开重�
   t.mock.restoreAll();
 
   command = host.open();
-  await host.waitFor((text) => text.includes("4 msgs · model-new · provider-new"));
+  await host.waitFor((text) => text.includes("4 msgs · provider-new/model-new"));
   const [, infoLine] = rowLines(host, "Changing session");
   assert.doesNotMatch(infoLine, /Loading details|model-old/, "重新打开不得沿用上次的加载态或旧数据");
   host.press("\u001b");

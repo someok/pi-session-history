@@ -51,9 +51,9 @@ pi install /absolute/path/to/pi-session-history
 这些动作及界面提示使用宿主传入的快捷键配置；重新绑定会替换默认键，空绑定列表可停用对应动作。
 
 - 有名称时显示名称；否则使用 pi 原生的首条可读用户消息回退，包括无消息时的 `(no messages)`。
-- 每条会话默认两行：第一行沿用原生标题、活动时间及路径/工作目录，不再显示原生消息数；第二行依次显示消息数（`msgs`）、model 与 provider。
+- 每条会话默认两行：第一行沿用原生标题、活动时间及路径/工作目录，不再显示原生消息数；第二行显示消息数（`msgs`）与最后回复模型的 `provider/model`。
 - 消息数只统计整个持久化历史的 user + assistant 消息，包括其它历史分支与 compaction 前记录；工具结果、system、直接 bash 执行、扩展自定义消息及其他角色不计入，工具内部嵌套调用也不额外增加。
-- 最后回复模型取整个历史按记录顺序最后一条 assistant 消息记录的 model/provider，不读取 `model_change` 等状态记录、不按时间戳重排，也不限于准备恢复的分支；虚拟模型显示实际处理该回复的 model/provider。错误或中止的最后一条 assistant 仍按该条显示，不回退到更早的成功回复；没有 assistant 显示 `No assistant message`，字段缺失显示 `unknown`。
+- 最后回复模型取整个历史按记录顺序最后一条 assistant 消息记录的 model/provider，不读取 `model_change` 等状态记录、不按时间戳重排，也不限于准备恢复的分支；虚拟模型显示实际处理该回复的 model/provider。错误或中止的最后一条 assistant 仍按该条显示，不回退到更早的成功回复；没有 assistant 显示 `No assistant message`，`provider/model` 中缺失的字段显示 `unknown`。
 - 活动时间来自 `SessionManager.list()`，与原生 user/assistant 活动时间及会话头回退规则一致，不另改为文件 mtime。相对时间沿用 `now`、`m`、`h`、`d`、`w`、`mo`、`y`。
 - `Tab` 在当前目录与全部范围之间切换。默认存储下全部范围扫描 pi 的 sessions 根目录；自定义 session 目录下只扫描该目录，与原生范围含义一致。
 - 线程排序（默认）无搜索时按 `parentSession` 展示父子层级，并按子树最新活动时间排序；搜索后线程与相关性排序按匹配分数升序，分数相同按活动时间降序；最近模式只过滤，保持活动时间顺序。

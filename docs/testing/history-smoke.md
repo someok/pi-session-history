@@ -72,7 +72,7 @@ npm pack --dry-run
 | 输入查询后到达的完整结果按会话身份保留选中项 | 通过 |
 | 查询后恢复正确目标；只注册 `/history`，不注册或替换 `/resume` | 通过 |
 | 中文/emoji 查询后的缩放、主题变化与选中项可见 | 通过 |
-| 每条会话默认两行；第一行不再重复显示消息数；第二行依次为 `msgs`、model、provider | 通过 |
+| 每条会话默认两行；第一行不再重复显示消息数；第二行展示 `msgs` 与 `provider/model` | 通过 |
 | 消息数只计全历史 user + assistant，含分支、compaction 前记录与仅含工具调用的 assistant；工具结果、system、bash、自定义消息及嵌套调用不计入 | 通过 |
 | 最后回复模型按记录顺序取最后一条 assistant；选择模型 B 未发消息、虚拟模型、错误/中止均使用该条记录；无 assistant 与字段缺失分别提示 | 通过 |
 | 第二行加载态与真实 `0 msgs`、`unknown`、`No assistant message` 分开 | 通过 |
@@ -96,7 +96,7 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 
 本切片新增的查询路径也在两种模式下实测：按 `Tab` 切到全部范围（标题变为 `History (All)`），输入正则 `re:^smoke-source` 后只剩匹配会话，按 `Ctrl+U` 清空查询恢复列表，再按 `Tab` 切回当前目录范围。
 
-第二行增强信息同样在两种模式下实测：打开与再次打开 `/history` 后都等待出现 `2 msgs · gpt-4.1-mini · openai`（fixture 为一条 user + 一条 assistant），确认全历史 user + assistant 计数与 assistant 记录的 model/provider 在真实终端中渲染，且加载态已消失。
+第二行增强信息同样在两种模式下实测：打开与再次打开 `/history` 后都等待出现 `2 msgs · openai/gpt-4.1-mini`（fixture 为一条 user + 一条 assistant），确认全历史 user + assistant 计数与 assistant 记录的 provider/model 在真实终端中渲染，且加载态已消失。
 
 每次打开 `/history` 时还断言会话内容仍可见，且选择器从分隔横线、标题、提示、搜索框到列表直接延伸到状态栏、其间不混入会话正文。分隔横线与原生选择器同色（dark 主题下 accent `#a798d7`），已用带颜色的终端捕获比对；控件不替换编辑器区域（例如改回 `overlay`）时，会话正文会出现在选择器与状态栏之间，该断言失败。
 

@@ -572,7 +572,9 @@ class HistorySelector implements Component, Focusable {
     if (stats.status === "failed") return "Could not load session details.";
     const messageCount = `${stats.messageCount} msgs`;
     if (!stats.lastAssistant) return `${messageCount} · No assistant message`;
-    return `${messageCount} · ${stats.lastAssistant.model ?? "unknown"} · ${stats.lastAssistant.provider ?? "unknown"}`;
+    const provider = stats.lastAssistant.provider ?? "unknown";
+    const model = stats.lastAssistant.model ?? "unknown";
+    return `${messageCount} · ${provider}/${model}`;
   }
 
   private renderTitleLine(node: SessionTreeNode, index: number, width: number, prefix: string): string {
