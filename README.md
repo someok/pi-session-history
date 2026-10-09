@@ -83,7 +83,7 @@ pi install /absolute/path/to/pi-session-history
 
 ### 后续切片
 
-重命名与删除（[#5](https://github.com/someok/pi-session-history/issues/5)），以及可见项优先的增强读取与失败隔离（[#8](https://github.com/someok/pi-session-history/issues/8)）属于后续切片。需要原生完整选择与管理功能时，继续使用 `/resume`。
+可见项优先的增强读取与失败隔离（[#8](https://github.com/someok/pi-session-history/issues/8)）属于后续切片。列表内不提供重命名与删除（原切片 [#5](https://github.com/someok/pi-session-history/issues/5) 已废弃）；需要原生完整选择与管理功能时，继续使用 `/resume`。
 
 本扩展不注册模型工具、不发起模型调用、不上传会话内容、不修改 session schema，也不持久化预览、全文或其他会话副本。
 

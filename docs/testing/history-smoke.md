@@ -1,6 +1,6 @@
 # /history 测试与冒烟记录
 
-对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）、[Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）与 [Issue #10](https://github.com/someok/pi-session-history/issues/10)（全文视图 `←`/`→` 翻页）。本记录只证明这七个切片，不代表父规格中重命名与删除等后续行为已经实现。
+对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）、[Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）与 [Issue #10](https://github.com/someok/pi-session-history/issues/10)（全文视图 `←`/`→` 翻页）。本记录只证明这七个切片，不代表父规格中尚未实施的后续切片已经实现。
 
 ## 环境
 
@@ -133,4 +133,4 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 - 不继承用户的 provider 凭据或当前会话环境变量；只加载待测扩展，禁用其他扩展、MCP、技能、提示词模板和项目上下文发现。
 - 设置 `PI_OFFLINE=1`、`PI_SKIP_VERSION_CHECK=1`、`PI_TELEMETRY=0`、`cacheWarming: "off"`，不发送模型请求。
 - 每次执行校验选定 CLI 入口及本地 SDK 原生选择器文件的 SHA-256；不修改 pi 安装或 session schema。
-- 成功和异常退出都结束专用 tmux server，临时目录随后删除；不访问用户真实历史或废纸篓。
+- 成功和异常退出都结束专用 tmux server，临时目录随后删除；不访问用户真实历史。
