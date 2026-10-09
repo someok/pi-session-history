@@ -176,21 +176,24 @@ class HistorySelector implements Component, Focusable {
 
   render(width: number): string[] {
     const height = Math.max(1, this.tui.terminal.rows);
-    // 与原生选择器一致的行顺序：标题与状态、两行提示、空行、搜索框、空行、列表。
-    // 按可用高度取舍装饰行，高度不足时先让位给列表。
+    // 与原生选择器一致的行顺序：分隔横线、标题与状态、两行提示、空行、
+    // 搜索框、空行、列表、空行、分隔横线。按可用高度取舍装饰行，高度不足时先让位给列表。
     const showHeader = height >= 5;
     const showHint1 = height >= 8;
     const showHint2 = height >= 9;
     const showSearch = height >= 7;
     // 搜索框上下空行，以及内容与下方提示之间的空行。
     const showGaps = height >= 11;
+    // 与原生一致，上方与下方各一条 accent 色分隔横线。
+    const showBorders = height >= 13;
     const fixedLines = (showHeader ? 1 : 0) + (showHint1 ? 1 : 0) + (showHint2 ? 1 : 0)
-      + (showSearch ? 1 : 0) + (showGaps ? 3 : 0);
+      + (showSearch ? 1 : 0) + (showGaps ? 3 : 0) + (showBorders ? 2 : 0);
     const listBudget = Math.max(1, height - fixedLines - 1);
     const preferredVisible = Math.max(5, Math.floor(height / 2));
     this.viewportHeight = Math.max(1, Math.min(preferredVisible, listBudget));
 
     const lines: string[] = [];
+    if (showBorders) lines.push(this.renderBorder(width));
     if (showHeader) lines.push(this.renderHeader(width));
     if (showHint1) lines.push(truncateToWidth(this.hintLine1(), width, "…"));
     if (showHint2) lines.push(truncateToWidth(this.hintLine2(), width, "…"));
@@ -206,11 +209,12 @@ class HistorySelector implements Component, Focusable {
     if (!rows.length) {
       lines.push(this.theme.fg(this.failed ? "error" : "muted", this.emptyMessage()));
       if (showGaps) lines.push("");
+      if (showBorders) lines.push(this.renderBorder(width));
       return lines.map((line) => truncateToWidth(line, width, ""));
     }
     // 内容超出可用行数时，用一行展示原生风格的滚动位置。
-    const scrollable = rows.length > this.viewportHeight;
-    const visibleCount = scrollable ? Math.max(1, this.viewportHeight - 1) : rows.length;
+    const scrollable = rows.length > this.viewportHeight && this.viewportHeight >= 2;
+    const visibleCount = scrollable ? this.viewportHeight - 1 : Math.min(rows.length, this.viewportHeight);
     const selectedOnScreen = Math.max(0, Math.min(this.nodes.length - 1, this.selected));
     const maxScroll = Math.max(0, rows.length - visibleCount);
     this.scrollTop = Math.max(0, Math.min(selectedOnScreen - Math.floor(visibleCount / 2), maxScroll));
@@ -218,8 +222,9 @@ class HistorySelector implements Component, Focusable {
     if (scrollable) {
       lines.push(this.theme.fg("muted", `  (${this.selected + 1}/${this.nodes.length})`));
     }
-    // 与下方的状态栏等内容留出一个空行作区分。
+    // 与下方的状态栏等内容留出一个空行，再加与原生一致的分隔横线。
     if (showGaps) lines.push("");
+    if (showBorders) lines.push(this.renderBorder(width));
     return lines.map((line) => truncateToWidth(line, width, ""));
   }
 
@@ -445,6 +450,11 @@ class HistorySelector implements Component, Focusable {
     const truncatedLeft = truncateToWidth(this.theme.bold(title), availableLeft, "…");
     const spacing = Math.max(0, width - visibleWidth(truncatedLeft) - visibleWidth(truncatedRight));
     return truncatedLeft + " ".repeat(spacing) + truncatedRight;
+  }
+
+  /** 与原生选择器一致：accent 色的整宽分隔横线。 */
+  private renderBorder(width: number): string {
+    return this.theme.fg("accent", "─".repeat(Math.max(1, width)));
   }
 
   /** 与原生一致的范围状态：加载中显示读取进度，否则显示当前/全部范围的选择。 */

@@ -52,8 +52,8 @@ def assert_replaces_editor(screen, mode):
     assert not any("SOURCE_TRANSCRIPT" in line for line in between), \
         f"{mode} /history 与状态栏之间出现了会话内容，未替换编辑器区域：\n{screen}"
     last = between[-1]
-    assert last.startswith(("›", "  ", ">", "(")), \
-        f"{mode} 状态栏上方不是 /history 列表内容：{last!r}\n{screen}"
+    assert last.startswith(("›", "  ", ">", "(", "─")), \
+        f"{mode} 状态栏上方不是 /history 内容：{last!r}\n{screen}"
 
 
 class TerminalHost:

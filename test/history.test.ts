@@ -16,12 +16,14 @@ test("打开 /history 时替换编辑器区域，不覆盖正在浏览的会话�
   await host.waitFor((text) => text.includes("Visible session") && !text.includes("Loading"));
   assert.deepEqual(host.placements, ["inline"], "/history 应显示在会话内容下方，而不是覆盖在上面");
   assert.match(host.text(), /Your last request/, "打开选择器后会话内容仍应可见");
-  // 搜索框上下各有一个空行，与原生选择器布局一致。
+  // 搜索框上下各有一个空行，与原生选择器布局一致；上下各有一条 accent 色分隔横线。
   const searchLine = host.frame.findIndex((line) => stripAnsi(line).startsWith(">"));
   assert.ok(searchLine > 0, "应渲染搜索框");
   assert.equal(stripAnsi(host.frame[searchLine - 1]).trim(), "", "搜索框上方应为空行");
   assert.equal(stripAnsi(host.frame[searchLine + 1]).trim(), "", "搜索框下方应为空行");
-  assert.equal(stripAnsi(host.frame[host.frame.length - 1]).trim(), "", "内容下方应为空行，与状态栏区分");
+  assert.equal(host.frame[0], host.theme.fg("accent", "─".repeat(80)), "顶部应与原生一致使用 accent 色横线");
+  assert.equal(host.frame[host.frame.length - 1], host.theme.fg("accent", "─".repeat(80)), "底部应与原生一致使用 accent 色横线");
+  assert.equal(stripAnsi(host.frame[host.frame.length - 2]).trim(), "", "横线前应为空行");
   host.press("\u001b");
   await command;
   assert.deepEqual(host.placements, ["inline"]);
