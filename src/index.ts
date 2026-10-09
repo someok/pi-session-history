@@ -176,14 +176,15 @@ class HistorySelector implements Component, Focusable {
 
   render(width: number): string[] {
     const height = Math.max(1, this.tui.terminal.rows);
-    // 与原生选择器一致的行顺序：标题与状态、两行提示、搜索框、列表。
-    // 按可用高度取舍装饰行，保证列表始终为上方会话内容留出空间。
+    // 与原生选择器一致的行顺序：标题与状态、两行提示、空行、搜索框、空行、列表。
+    // 按可用高度取舍装饰行，高度不足时先让位给列表。
     const showHeader = height >= 5;
     const showHint1 = height >= 8;
     const showHint2 = height >= 9;
     const showSearch = height >= 7;
-    const fixedLines = (showHeader ? 1 : 0) + (showHint1 ? 1 : 0)
-      + (showHint2 ? 1 : 0) + (showSearch ? 1 : 0);
+    const showBlank = height >= 11;
+    const fixedLines = (showHeader ? 1 : 0) + (showHint1 ? 1 : 0) + (showHint2 ? 1 : 0)
+      + (showSearch ? 1 : 0) + (showBlank ? 2 : 0);
     const listBudget = Math.max(1, height - fixedLines - 1);
     const preferredVisible = Math.max(5, Math.floor(height / 2));
     this.viewportHeight = Math.max(1, Math.min(preferredVisible, listBudget));
@@ -192,11 +193,13 @@ class HistorySelector implements Component, Focusable {
     if (showHeader) lines.push(this.renderHeader(width));
     if (showHint1) lines.push(truncateToWidth(this.hintLine1(), width, "…"));
     if (showHint2) lines.push(truncateToWidth(this.hintLine2(), width, "…"));
+    if (showBlank) lines.push("");
     if (showSearch) {
       for (const line of this.searchInput.render(width)) {
         lines.push(truncateToWidth(line, width, ""));
       }
     }
+    if (showBlank) lines.push("");
 
     const rows = this.nodes.map((node, index) => this.renderRow(node, index, width));
     if (!rows.length) {
