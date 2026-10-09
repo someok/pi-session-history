@@ -29,7 +29,8 @@ import {
   type SessionTreeNode,
 } from "./session-tree.ts";
 import { MAX_PREVIEW_LINES, toMessagePreview, wrapMessage, wrapMessageLines } from "./message-preview.ts";
-import { readSessionDetails, type SessionDetails } from "./session-details.ts";
+import { readSessionDetails } from "./session-details.ts";
+import { DetailsScheduler, type DetailsState } from "./details-scheduler.ts";
 
 /** 会话范围：当前工作目录，或 pi 存储内的全部会话。 */
 type Scope = "current" | "all";
@@ -46,15 +47,6 @@ interface ScopeState {
   sessions: SessionInfo[] | null;
   load: AbortController | null;
 }
-
-/** 单条会话增强信息的加载状态；未就绪时渲染加载态，不伪造 0、unknown 或无消息。 */
-type DetailsState =
-  | { status: "loading" }
-  | { status: "failed" }
-  | ({ status: "ready" } & SessionDetails);
-
-/** 并发读取增强信息的条数上限；关闭选择器时会中止全部读取。 */
-const MAX_CONCURRENT_DETAILS_READS = 4;
 
 /** 展开预览左侧的竖线标记，用于在列表中区分消息体；宽度计两列。 */
 const PREVIEW_MARKER = "│ ";
@@ -182,10 +174,7 @@ class HistorySelector implements Component, Focusable {
   private readonly previewScroll = new Map<string, number>();
   /** 上一次渲染得到的正文窗口行数与最大偏移，供分页按键夹紧。 */
   private readonly previewScrollMetrics = new Map<string, { textWindow: number; maxOffset: number }>();
-  private readonly details = new Map<string, DetailsState>();
-  private readonly detailsQueue: string[] = [];
-  private activeDetailsReads = 0;
-  private readonly detailsAbort = new AbortController();
+  private readonly details: DetailsScheduler;
   /** 打开中的全文视图；为 null 表示列表模式。 */
   private fullView: FullMessageView | null = null;
   /** 全文视图上一次渲染得到的翻页步长与最大滚动偏移。 */
@@ -201,6 +190,10 @@ class HistorySelector implements Component, Focusable {
     this.usesDefaultSessionDir = options.usesDefaultSessionDir;
     this.currentSessionCanonicalPath = canonicalizePath(options.currentSessionFile);
     this.onDone = options.done;
+    this.details = new DetailsScheduler({
+      read: (path, signal) => readSessionDetails(path, signal),
+      onUpdate: () => this.tui.requestRender(),
+    });
     void this.loadScope("current");
   }
 
@@ -271,6 +264,7 @@ class HistorySelector implements Component, Focusable {
     const range = visibleRows(rowHeights, this.selected, budget);
     this.pageRows = Math.max(1, range.end - range.start);
     this.scrollTop = range.start;
+    this.prioritizeVisibleDetails(range.start, range.end);
     let rendered = 0;
     for (let index = range.start; index < range.end && rendered < budget; index++) {
       for (const line of rows[index]) {
@@ -431,36 +425,10 @@ class HistorySelector implements Component, Focusable {
   // 增强信息（消息数、最后回复模型与最后用户消息）
   // ---------------------------------------------------------------------------
 
-  /** 为尚未读取的会话排队，每条只请求一次；列表渐进更新时同样适用。 */
+  /** 为尚未读取的会话排队；列表渐进更新与后续范围切换都只请求一次。 */
   private requestDetails(sessions: readonly SessionInfo[]): void {
     if (this.closed) return;
-    for (const session of sessions) {
-      if (this.details.has(session.path)) continue;
-      this.details.set(session.path, { status: "loading" });
-      this.detailsQueue.push(session.path);
-    }
-    this.pumpDetails();
-  }
-
-  /** 以有限并发读取排队中的会话；关闭选择器后不再补位。 */
-  private pumpDetails(): void {
-    while (!this.closed && this.activeDetailsReads < MAX_CONCURRENT_DETAILS_READS && this.detailsQueue.length > 0) {
-      const path = this.detailsQueue.shift() as string;
-      this.activeDetailsReads++;
-      void readSessionDetails(path, this.detailsAbort.signal).then(
-        (result) => this.applyDetails(path, { status: "ready", ...result }),
-        () => this.applyDetails(path, { status: "failed" }),
-      );
-    }
-  }
-
-  /** 单条读取完成：只更新该条并继续排队；已关闭的界面不再接收迟到结果。 */
-  private applyDetails(path: string, state: DetailsState): void {
-    this.activeDetailsReads--;
-    if (this.closed) return;
-    this.details.set(path, state);
-    this.tui.requestRender();
-    this.pumpDetails();
+    this.details.enqueue(sessions.map((session) => session.path));
   }
 
   // ---------------------------------------------------------------------------
@@ -499,6 +467,19 @@ class HistorySelector implements Component, Focusable {
       }));
     }
     this.selected = Math.max(0, Math.min(this.selected, this.nodes.length - 1));
+  }
+
+  /**
+   * 视口内的会话优先读取增强信息；滚动、查询、筛选与范围切换后重新排序，
+   * 让已经离开视口的读取为当前可见项让出并发槽位。
+   */
+  private prioritizeVisibleDetails(start: number, end: number): void {
+    const paths: string[] = [];
+    for (let index = start; index < end; index++) {
+      const session = this.nodes[index]?.session;
+      if (session) paths.push(session.path);
+    }
+    this.details.prioritize(paths);
   }
 
   private selectedPath(): string | undefined {
@@ -638,7 +619,7 @@ class HistorySelector implements Component, Focusable {
   private finish(result?: string): void {
     if (this.closed) return;
     this.closed = true;
-    this.detailsAbort.abort();
+    this.details.stop();
     for (const state of Object.values(this.scopeStates)) {
       state.load?.abort();
       state.load = null;
@@ -815,6 +796,7 @@ class HistorySelector implements Component, Focusable {
     if (chrome.gaps) lines.push("");
 
     const content = this.fullContentLines(width);
+    this.details.prioritize([view.path]);
     const scrollable = content.length > contentBudget;
     const budget = scrollable ? Math.max(1, contentBudget - 1) : contentBudget;
     this.fullPageRows = budget;

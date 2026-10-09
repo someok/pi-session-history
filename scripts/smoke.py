@@ -17,7 +17,7 @@ PI = str(Path(os.environ.get("PI_BIN", ROOT / "node_modules/.bin/pi")).absolute(
 TMUX = shutil.which("tmux")
 
 
-def save_session(directory, cwd, session_id, name, marker, ago):
+def save_session(directory, cwd, session_id, name, marker, ago, model="gpt-4.1-mini"):
     activity = int(time.time() * 1000) - ago
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(activity / 1000))
     # 长正文用于验证原地预览的换行与截断提示，也用于验证全文视图能滚动到预览之外的正文。
@@ -30,7 +30,7 @@ def save_session(directory, cwd, session_id, name, marker, ago):
                      "timestamp": activity - 1}},
         {"type": "message", "id": "assistant", "parentId": "user", "timestamp": timestamp,
          "message": {"role": "assistant", "content": [{"type": "text", "text": marker}],
-                     "api": "openai-responses", "provider": "openai", "model": "gpt-4.1-mini",
+                     "api": "openai-responses", "provider": "openai", "model": model,
                      "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0,
                                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}},
                      "stopReason": "stop", "timestamp": activity}},
@@ -74,7 +74,7 @@ class TerminalHost:
         )
 
     def start(self, mode, *options):
-        self.tmux("new-session", "-d", "-s", "smoke", "-x", "120", "-y", "44",
+        self.tmux("new-session", "-d", "-s", "smoke", "-x", "120", "-y", "60",
                   "-c", str(self.cwd), "exec " + shlex.join([
                       PI, *self.cli_options, "--extension", str(ROOT if mode == "fullscreen" else ROOT / "src/index.ts"),
                       "--tui-mode", mode, *options,
@@ -129,6 +129,15 @@ def check_interactive(host, mode, source):
     # 第二行展示全历史 user + assistant 消息数与最后回复模型。
     host.wait(lambda screen: "2 msgs · openai/gpt-4.1-mini" in screen,
               f"{mode} 第二行显示消息数、provider 与 model")
+    # 大量会话下把选中项移到远端会话，其可见项的增强信息同样在真实终端中补齐。
+    for _ in range(7):
+        host.key("Down")
+    host.wait(lambda screen: "› Load probe 6" in screen and "2 msgs · openai/probe-model-6" in screen
+              and "Loading" not in screen, f"{mode} 选择远端会话后增强信息就绪")
+    for _ in range(7):
+        host.key("Up")
+    host.wait(lambda screen: "› History smoke target" in screen and "Loading" not in screen,
+              f"{mode} 滚动回目标会话")
     assert_replaces_editor(host.screen(), mode)
     # 原地预览最后用户消息：→ 展开并给出窗口范围与 Ctrl+O 全文入口提示，← 收起。
     host.key("Right")
@@ -154,18 +163,18 @@ def check_interactive(host, mode, source):
               f"{mode} Ctrl+O 打开全文并显示超出预览范围的正文")
     if mode == "regular":
         host.key("PageDown")
-        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen and "(26/61)" in screen,
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen and "(1/61)" not in screen,
                   f"{mode} 全文 PageDown 可遍历超屏内容")
         host.key("PageUp")
         host.wait(lambda screen: "(1/61)" in screen, f"{mode} 全文 PageUp 回到首屏")
         host.key("Right")
-        host.wait(lambda screen: "(26/61)" in screen, f"{mode} 全文 → 翻页可用")
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen, f"{mode} 全文 → 翻页可用")
         host.key("Left")
         host.wait(lambda screen: "(1/61)" in screen, f"{mode} 全文 ← 翻页可用")
     else:
         # fullscreen 下 alt-screen 会先消费 PageUp/PageDown；←/→ 翻页仍可用。
         host.key("Right")
-        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen and "(26/61)" in screen,
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen and "(1/61)" not in screen,
                   f"{mode} 全文 → 可遍历超屏内容（alt-screen 接管了 PageUp/PageDown）")
     # 只读：Enter 不恢复会话；Esc 返回列表；后续步骤继续验证恢复链路。
     host.key("Enter")
@@ -208,7 +217,7 @@ def check_interactive(host, mode, source):
               f"{mode} 原生 /resume 仍能恢复")
     host.session("smoke-source")
     host.stop()
-    print(f"PASS {mode}: /history 打开、第二行增强信息、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
+    print(f"PASS {mode}: /history 打开、第二行增强信息、远端会话选择、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
 
 
 def check_startup_resume(host, mode):
@@ -221,6 +230,22 @@ def check_startup_resume(host, mode):
     host.session("smoke-target")
     host.stop()
     print(f"PASS {mode}: pi --resume 原生启动选择器及实际恢复未替换")
+
+
+def check_non_tui(project, env, cli_options):
+    """非 TUI 模式：/history 不启动终端界面，也不向标准输出混入界面内容。"""
+    project.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        [PI, *cli_options, "--extension", str(ROOT / "src/index.ts"), "--print", "--mode", "json", "/history"],
+        cwd=project, env=env, text=True, capture_output=True, timeout=60,
+    )
+    assert completed.returncode == 0, f"非 TUI 运行失败：{completed.stderr}"
+    assert "History (" not in completed.stdout, f"非 TUI 模式启动了终端界面：{completed.stdout}"
+    assert "\x1b" not in completed.stdout, f"非 TUI 输出混入终端控制序列：{completed.stdout!r}"
+    for line in completed.stdout.splitlines():
+        if line.strip():
+            json.loads(line)
+    print("PASS non-tui: --print --mode json 执行 /history 不启动终端界面，输出仍为合法 JSON")
 
 
 def digest(path):
@@ -256,15 +281,22 @@ def main():
         }
         source = save_session(sessions, cwd, "smoke-source", "Original smoke task", "SOURCE_TRANSCRIPT", 300_000)
         save_session(sessions, cwd, "smoke-target", "History smoke target", "TARGET_TRANSCRIPT", 60_000)
-        host = TerminalHost(base / "tmux.sock", cwd, env, [
+        # 额外会话用于在真实终端中验证：列表可移动选择浏览多个会话，可见项的增强信息按需补齐。
+        for index in range(1, 7):
+            save_session(sessions, cwd, f"smoke-load-{index}", f"Load probe {index}",
+                         f"PROBE_TRANSCRIPT_{index}", 360_000 + index * 60_000, model=f"probe-model-{index}")
+        # 交互与非 TUI 检查共用同一组隔离参数。
+        cli_options = [
             "--offline", "--no-extensions",
             "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-themes", "--no-mcp",
             "--no-approve", "--session-dir", str(sessions), "--model", "openai/gpt-4.1-mini", "--thinking", "off",
-        ])
+        ]
+        host = TerminalHost(base / "tmux.sock", cwd, env, cli_options)
         try:
             for mode in ["regular", "fullscreen"]:
                 check_interactive(host, mode, source)
                 check_startup_resume(host, mode)
+            check_non_tui(base / "non-tui", env, cli_options)
             assert all(digest(path) == value for path, value in before.items()), "pi 可执行文件或原生选择器被修改"
             print("PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均使用已清理的临时数据")
         finally:

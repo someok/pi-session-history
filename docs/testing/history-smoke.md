@@ -1,6 +1,6 @@
 # /history 测试与冒烟记录
 
-对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）、[Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）与 [Issue #10](https://github.com/someok/pi-session-history/issues/10)（全文视图 `←`/`→` 翻页）。本记录只证明这七个切片，不代表父规格中尚未实施的后续切片已经实现。
+对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）、[Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）、[Issue #10](https://github.com/someok/pi-session-history/issues/10)（全文视图 `←`/`→` 翻页）与 [Issue #8](https://github.com/someok/pi-session-history/issues/8)（可见项优先读取与异步状态一致性）。本记录只证明这八个切片。
 
 ## 环境
 
@@ -23,7 +23,7 @@ PI_BIN="$(command -v pi)" npm run test:smoke
 npm pack --dry-run
 ```
 
-`npm run check` 的结果为类型检查通过、**62 项测试通过，无失败或跳过**；其中包括非 TUI 模式、交互结束方式、第二行信息读写、原地预览与 `Ctrl+O` 全文视图的子测试。
+`npm run check` 的结果为类型检查通过、**70 项测试通过，无失败或跳过**；其中包括非 TUI 模式、交互结束方式、第二行信息读写、原地预览、`Ctrl+O` 全文视图以及可见项优先调度与异步竞态的子测试。
 
 `npm pack --dry-run` 只检查本地包清单，不发布 npm 包。宿主包放在 `peerDependencies` 中，由 pi 提供；开发依赖和 lockfile 将验收基线固定为 1.1.0。
 
@@ -100,16 +100,25 @@ npm pack --dry-run
 | 全文只读：`Enter`、字符、删除与列表动作不改变界面、不恢复会话、不修改或另存正文 | 通过 |
 | 加载未完成也能打开全文并在原地补齐；返回后迟到结果不重开旧视图，切换选中项后重开显示新会话 | 通过 |
 | 全文在中文、emoji、窄宽度、小高度、缩放与主题变化后不越界，仍可滚动到末尾 | 通过 |
+| 大量会话下滚动后新可见项优先补齐，不被不可见项的挂起读取阻塞（被让位的读取稍后补读） | 通过 |
+| 加载期间 `Ctrl+O` 的全文目标优先读取，返回后列表选中与加载态保持 | 通过 |
+| 增强信息全部未就绪时列表仍可搜索、选择与恢复 | 通过 |
+| 读取未完成时切换查询或筛选，迟到结果不让不再匹配或被筛掉的条目回来 | 通过 |
+| 读取未完成时切换范围，迟到结果不让当前范围外的条目回来 | 通过 |
+| 加载中更换全文目标，第一项的迟到结果不覆盖当前目标正文 | 通过 |
+| 关闭后立即重开，上一轮迟到的读取不进入新一轮交互 | 通过 |
+| 查询、范围、三种排序、命名筛选、路径与快捷键同双行信息、原地预览、全文协同的组合回归 | 通过 |
 
 ## 真实宿主冒烟
 
 `scripts/smoke.py` 使用专用 tmux socket 启动真实 pi CLI，普通模式以扩展文件加载，fullscreen 模式以本地包 manifest 加载。两个 pi 入口分别得到以下结果：
 
 ```text
-PASS regular: /history 打开、第二行增强信息、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
+PASS regular: /history 打开、第二行增强信息、远端会话选择、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
 PASS regular: pi --resume 原生启动选择器及实际恢复未替换
-PASS fullscreen: /history 打开、第二行增强信息、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
+PASS fullscreen: /history 打开、第二行增强信息、远端会话选择、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
 PASS fullscreen: pi --resume 原生启动选择器及实际恢复未替换
+PASS non-tui: --print --mode json 执行 /history 不启动终端界面，输出仍为合法 JSON
 PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均使用已清理的临时数据
 ```
 
@@ -119,13 +128,17 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 
 第二行增强信息同样在两种模式下实测：打开与再次打开 `/history` 后都等待出现 `2 msgs · openai/gpt-4.1-mini`（fixture 为一条 user + 一条 assistant），确认全历史 user + assistant 计数与 assistant 记录的 provider/model 在真实终端中渲染，且加载态已消失。
 
+大量会话下的渐进浏览也在两种模式下实测：fixture 额外创建 6 条隔离会话（`Load probe 1`–`Load probe 6`，assistant 模型分别为 `probe-model-1`–`probe-model-6`）；打开 `/history` 后按 `Down` 把选中项移到最后一个会话，等待 `› Load probe 6` 与 `2 msgs · openai/probe-model-6` 同时出现且屏幕无 `Loading`，再按 `Up` 回到 `› History smoke target`，确认真实终端中多会话列表可正常选择，远端可见项的增强信息按需补齐（120×60 窗口下 8 条会话一次全部可见，所以这里验证的是按需读取而不是视口抢占；视口抢占与让位再次补读由行为测试覆盖）。
+
 本切片新增的原地预览也在两种模式下实测：fixture 的最后一条 user 消息包含 60 行 `SMOKE PREVIEW LINE`，打开 `/history` 后按 `→` 等待出现 `│ Isolated smoke request`、`1-6/61`、`Ctrl+O full message` 与 `→/← preview` 提示（长正文只显示 6 行正文加窗口范围与全文入口提示，消息体左侧带竖线），按 `←` 后提示消失，证明真实终端中的按键、竖线与截断渲染生效。普通模式还按 `PageDown`/`PageUp` 验证预览内翻页：`PageDown` 后提示变为 `7-12/61` 且选中项 `› History smoke target` 不变，`PageUp` 后回到 `1-6/61`；fullscreen 下分页按键被 alt-screen 接管（见下），因此只验证展开与提示。
 
-本切片新增的 `Ctrl+O` 全文视图同样在两种模式下实测：按 `Ctrl+O` 后等待出现 `Full message`、`Isolated smoke request`、`SMOKE PREVIEW LINE 20` 与 `(1/61)`，且第 60 行尚不可见（证明正文不再受 6 行上限并显示了位置提示）；普通模式按 `PageDown` 后第 60 行进入可见区（`(26/61)`），再按 `PageUp` 回到首屏（`(1/61)`），`→`/`←` 也各自验证了一次；fullscreen 模式只用 `→` 翻到第 60 行、不再验证被 alt-screen 接管的 PageUp/PageDown。在全文视图按 `Enter` 不会恢复会话，按 `Esc` 回到列表；后续步骤继续用原生 `/session` 验证恢复链路，确认只读视图未改变列表状态与恢复目标。
+本切片新增的 `Ctrl+O` 全文视图同样在两种模式下实测：按 `Ctrl+O` 后等待出现 `Full message`、`Isolated smoke request`、`SMOKE PREVIEW LINE 20` 与 `(1/61)`，且第 60 行尚不可见（证明正文不再受 6 行上限并显示了位置提示）；普通模式按 `PageDown` 后第 60 行进入可见区且位置提示离开 `(1/61)`，再按 `PageUp` 回到首屏（`(1/61)`），`→`/`←` 也各自验证了一次；fullscreen 模式只用 `→` 翻到第 60 行、不再验证被 alt-screen 接管的 PageUp/PageDown。在全文视图按 `Enter` 不会恢复会话，按 `Esc` 回到列表；后续步骤继续用原生 `/session` 验证恢复链路，确认只读视图未改变列表状态与恢复目标。
 
 每次打开 `/history` 时还断言会话内容仍可见，且选择器从分隔横线、标题、提示、搜索框到列表直接延伸到状态栏、其间不混入会话正文。分隔横线与原生选择器同色（dark 主题下 accent `#a798d7`），已用带颜色的终端捕获比对；控件不替换编辑器区域（例如改回 `overlay`）时，会话正文会出现在选择器与状态栏之间，该断言失败。
 
 冒烟中发现一项宿主行为：fullscreen 模式下 pi 1.1.0 的 alt-screen 会在内联自定义组件之前消费 `PageUp`/`PageDown`（它们被绑定为原生会话视口滚动），因此内联的 /history 在 fullscreen 下收不到这两个键——原地预览无法翻页，全文视图改用 `←`/`→` 翻页（`↑`/`↓` 仍逐行滚动）；普通 TUI 模式两个按键都可用。这与 `tui-alt-screen.js` 中 `tui.altScreen.pageUp` / `pageDown`「有意遮蔽未修改的编辑器绑定」一致；扩展没有修改 pi 安装，也无法在内联组件中阻止该键被视口消费，已在 README 注明该差异。
+
+非 TUI 工作流也在真实 CLI 下实测：用与交互模式相同的隔离环境执行 `pi --print --mode json /history`，退出码为 0，标准输出每行均为合法 JSON，不含 `History (` 界面文本或终端控制序列，确认扩展在非 TUI 下不会启动终端界面或污染输出。
 
 ### 隔离与清理
 
@@ -133,4 +146,5 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 - 不继承用户的 provider 凭据或当前会话环境变量；只加载待测扩展，禁用其他扩展、MCP、技能、提示词模板和项目上下文发现。
 - 设置 `PI_OFFLINE=1`、`PI_SKIP_VERSION_CHECK=1`、`PI_TELEMETRY=0`、`cacheWarming: "off"`，不发送模型请求。
 - 每次执行校验选定 CLI 入口及本地 SDK 原生选择器文件的 SHA-256；不修改 pi 安装或 session schema。
+- 交互检查使用 120×60 的 tmux 窗口：列表可同时显示全部隔离会话，全文视图一次翻页可到达第 60 行；断言不写死翻页步长，只要求超屏内容进入可见区且位置提示变化。列表滚动与视口抢占不在真实终端冒烟中断言，由 `test/history-async.test.ts` 在受控时序下覆盖。
 - 成功和异常退出都结束专用 tmux server，临时目录随后删除；不访问用户真实历史。
