@@ -28,7 +28,7 @@ import {
   canonicalizePath,
   type SessionTreeNode,
 } from "./session-tree.ts";
-import { MAX_PREVIEW_LINES, toMessagePreview, wrapMessagePreview } from "./message-preview.ts";
+import { MAX_PREVIEW_LINES, toMessagePreview, wrapMessageLines, wrapMessagePreview } from "./message-preview.ts";
 import { readSessionDetails, type SessionDetails } from "./session-details.ts";
 
 /** 会话范围：当前工作目录，或 pi 存储内的全部会话。 */
@@ -58,6 +58,25 @@ const MAX_CONCURRENT_DETAILS_READS = 4;
 
 /** 展开预览左侧的竖线标记，用于在列表中区分消息体；宽度计两列。 */
 const PREVIEW_MARKER = "│ ";
+
+/** 预览被截断时指向全文视图的提示；Ctrl+O 是固定按键。 */
+const PREVIEW_TRUNCATED_HINT = "… Ctrl+O full message";
+
+/** 消息未就绪、读取失败、无 user 与空正文的反馈；预览与全文视图共用同一口径。 */
+const LOADING_MESSAGE = "Loading message preview...";
+const FAILED_MESSAGE = "Could not load message preview.";
+const NO_USER_MESSAGE = "No user message";
+const EMPTY_MESSAGE = "(empty message)";
+
+/** 只读全文视图：绑定打开时的会话身份与标题，独立保存滚动位置。 */
+interface FullMessageView {
+  /** 会话身份（会话文件路径）；属于其它会话的迟到结果不会替换这里的正文。 */
+  path: string;
+  /** 打开时的会话标题，用于说明正在阅读哪条会话。 */
+  title: string;
+  /** 顶部首个显示行的偏移量，单位为显示行。 */
+  scrollTop: number;
+}
 
 interface HistorySelectorOptions {
   tui: TUI;
@@ -163,6 +182,11 @@ class HistorySelector implements Component, Focusable {
   private readonly detailsQueue: string[] = [];
   private activeDetailsReads = 0;
   private readonly detailsAbort = new AbortController();
+  /** 打开中的全文视图；为 null 表示列表模式。 */
+  private fullView: FullMessageView | null = null;
+  /** 全文视图上一次渲染得到的翻页步长与最大滚动偏移。 */
+  private fullPageRows = 1;
+  private fullScrollMax = 0;
 
   constructor(options: HistorySelectorOptions) {
     this.tui = options.tui;
@@ -200,41 +224,39 @@ class HistorySelector implements Component, Focusable {
   }
 
   render(width: number): string[] {
+    return this.fullView ? this.renderFullMessage(width) : this.renderList(width);
+  }
+
+  /** 列表模式渲染；行顺序与原生选择器一致。 */
+  private renderList(width: number): string[] {
     const height = Math.max(1, this.tui.terminal.rows);
     // 与原生选择器一致的行顺序：分隔横线、标题与状态、两行提示、空行、
     // 搜索框、空行、列表、空行、分隔横线。按可用高度取舍装饰行，高度不足时先让位给列表。
-    const showHeader = height >= 5;
-    const showHint1 = height >= 8;
-    const showHint2 = height >= 9;
-    const showSearch = height >= 7;
-    // 搜索框上下空行，以及内容与下方提示之间的空行。
-    const showGaps = height >= 11;
-    // 与原生一致，上方与下方各一条 accent 色分隔横线。
-    const showBorders = height >= 13;
-    const fixedLines = (showHeader ? 1 : 0) + (showHint1 ? 1 : 0) + (showHint2 ? 1 : 0)
-      + (showSearch ? 1 : 0) + (showGaps ? 3 : 0) + (showBorders ? 2 : 0);
+    const chrome = chromeFor(height);
+    const fixedLines = (chrome.header ? 1 : 0) + (chrome.hint1 ? 1 : 0) + (chrome.hint2 ? 1 : 0)
+      + (chrome.search ? 1 : 0) + (chrome.gaps ? 3 : 0) + (chrome.borders ? 2 : 0);
     const listBudget = Math.max(1, height - fixedLines - 1);
     const preferredVisible = Math.max(5, Math.floor(height / 2));
     this.viewportHeight = Math.max(1, Math.min(preferredVisible, listBudget));
 
     const lines: string[] = [];
-    if (showBorders) lines.push(this.renderBorder(width));
-    if (showHeader) lines.push(this.renderHeader(width));
-    if (showHint1) lines.push(truncateToWidth(this.hintLine1(), width, "…"));
-    if (showHint2) lines.push(truncateToWidth(this.hintLine2(), width, "…"));
-    if (showGaps) lines.push("");
-    if (showSearch) {
+    if (chrome.borders) lines.push(this.renderBorder(width));
+    if (chrome.header) lines.push(this.renderHeader(width));
+    if (chrome.hint1) lines.push(truncateToWidth(this.hintLine1(), width, "…"));
+    if (chrome.hint2) lines.push(truncateToWidth(this.hintLine2(), width, "…"));
+    if (chrome.gaps) lines.push("");
+    if (chrome.search) {
       for (const line of this.searchInput.render(width)) {
         lines.push(truncateToWidth(line, width, ""));
       }
     }
-    if (showGaps) lines.push("");
+    if (chrome.gaps) lines.push("");
 
     const rows = this.nodes.map((node, index) => this.renderNode(node, index, width));
     if (!rows.length) {
       lines.push(this.theme.fg(this.failed ? "error" : "muted", this.emptyMessage()));
-      if (showGaps) lines.push("");
-      if (showBorders) lines.push(this.renderBorder(width));
+      if (chrome.gaps) lines.push("");
+      if (chrome.borders) lines.push(this.renderBorder(width));
       return lines.map((line) => truncateToWidth(line, width, ""));
     }
     // 双行（及后续变高）条目按终端可用行数滚动，选中项必须完整可见。
@@ -257,13 +279,17 @@ class HistorySelector implements Component, Focusable {
       lines.push(this.theme.fg("muted", `  (${this.selected + 1}/${this.nodes.length})`));
     }
     // 与下方的状态栏等内容留出一个空行，再加与原生一致的分隔横线。
-    if (showGaps) lines.push("");
-    if (showBorders) lines.push(this.renderBorder(width));
+    if (chrome.gaps) lines.push("");
+    if (chrome.borders) lines.push(this.renderBorder(width));
     return lines.map((line) => truncateToWidth(line, width, ""));
   }
 
   handleInput(data: string): void {
     if (this.closed) return;
+    if (this.fullView) {
+      this.handleFullViewInput(data);
+      return;
+    }
     const kb = this.keybindings;
     // 先匹配开关类动作，避免原生快捷键（可能是不带修饰的字符）被搜索框吞掉。
     if (kb.matches(data, "tui.input.tab")) {
@@ -315,6 +341,11 @@ class HistorySelector implements Component, Focusable {
       const expand = matchesKey(data, "right");
       if (expand || matchesKey(data, "left")) {
         this.togglePreview(expand);
+        return;
+      }
+      // Ctrl+O 为固定按键，与该项是否已展开无关，直接打开选中会话的全文视图。
+      if (matchesKey(data, "ctrl+o")) {
+        this.openFullMessage();
         return;
       }
     }
@@ -503,6 +534,64 @@ class HistorySelector implements Component, Focusable {
     return this.nodes[this.selected]?.session.path;
   }
 
+  // ---------------------------------------------------------------------------
+  // 只读全文视图
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 打开选中会话的只读全文视图。
+   *
+   * 不要求该项已展开，也不要求增强信息已经读取完成；视图绑定打开时的会话
+   * 身份，之后的异步结果只按该身份更新同一会话的正文。
+   */
+  private openFullMessage(): void {
+    const node = this.nodes[this.selected];
+    if (!node) return;
+    this.requestDetails([node.session]);
+    this.fullView = { path: node.session.path, title: sessionTitle(node.session), scrollTop: 0 };
+    this.tui.requestRender();
+  }
+
+  /** Esc 返回列表；搜索、范围、排序、筛选、选中、展开与滚动位置都保持不变。 */
+  private closeFullMessage(): void {
+    this.fullView = null;
+    this.tui.requestRender();
+  }
+
+  /** 按显示行滚动全文；偏移量在渲染时按内容高度夹紧。 */
+  private scrollFullMessage(delta: number): void {
+    const view = this.fullView;
+    if (!view) return;
+    view.scrollTop = Math.max(0, Math.min(this.fullScrollMax, view.scrollTop + delta));
+    this.tui.requestRender();
+  }
+
+  /**
+   * 全文视图为只读：只接受滚动与返回；Enter、字符及其它列表动作都不会
+   * 修改正文、删除会话或触发会话恢复。
+   */
+  private handleFullViewInput(data: string): void {
+    const kb = this.keybindings;
+    if (kb.matches(data, "tui.select.up")) {
+      this.scrollFullMessage(-1);
+      return;
+    }
+    if (kb.matches(data, "tui.select.down")) {
+      this.scrollFullMessage(1);
+      return;
+    }
+    if (kb.matches(data, "tui.select.pageUp")) {
+      this.scrollFullMessage(-this.fullPageRows);
+      return;
+    }
+    if (kb.matches(data, "tui.select.pageDown")) {
+      this.scrollFullMessage(this.fullPageRows);
+      return;
+    }
+    // 其余按键（含 Enter 与列表动作）在只读视图中不做任何事。
+    if (kb.matches(data, "tui.select.cancel")) this.closeFullMessage();
+  }
+
   private toggleSortMode(): void {
     // 与原生一致：threaded → recent → relevance → threaded。
     this.sortMode = this.sortMode === "threaded"
@@ -549,9 +638,14 @@ class HistorySelector implements Component, Focusable {
       this.theme.fg("muted", "Name: ") + this.theme.fg("accent", this.nameFilter === "all" ? "All" : "Named"),
       this.theme.fg("muted", "Sort: ") + this.theme.fg("accent", sortLabel),
     ].join("  ");
-    const truncatedRight = truncateToWidth(rightText, width, "");
+    return this.renderTwoColumnHeader(this.theme.bold(title), rightText, width);
+  }
+
+  /** 左右两栏的头部行：右侧信息先被截断，标题保留更多空间。 */
+  private renderTwoColumnHeader(left: string, right: string, width: number): string {
+    const truncatedRight = truncateToWidth(right, width, "");
     const availableLeft = Math.max(0, width - visibleWidth(truncatedRight) - 1);
-    const truncatedLeft = truncateToWidth(this.theme.bold(title), availableLeft, "…");
+    const truncatedLeft = truncateToWidth(left, availableLeft, "…");
     const spacing = Math.max(0, width - visibleWidth(truncatedLeft) - visibleWidth(truncatedRight));
     return truncatedLeft + " ".repeat(spacing) + truncatedRight;
   }
@@ -591,7 +685,8 @@ class HistorySelector implements Component, Focusable {
     return this.keyHint("app.session.toggleSort", "sort")
       + separator + this.keyHint("app.session.toggleNamedFilter", "named")
       + separator + this.keyHint("app.session.togglePath", `path (${this.showPath ? "on" : "off"})`)
-      + separator + this.theme.fg("dim", "→/←") + this.theme.fg("muted", " preview");
+      + separator + this.theme.fg("dim", "→/←") + this.theme.fg("muted", " preview")
+      + separator + this.theme.fg("dim", "Ctrl+O") + this.theme.fg("muted", " full message");
   }
 
   /** 渲染单条会话：第一行原生识别信息，第二行增强信息，展开时追加消息预览。 */
@@ -637,11 +732,71 @@ class HistorySelector implements Component, Focusable {
    */
   private previewLines(session: SessionInfo, contentWidth: number): string[] {
     const state = this.details.get(session.path);
-    if (!state || state.status === "loading") return ["Loading message preview..."];
-    if (state.status === "failed") return ["Could not load message preview."];
-    if (state.lastUser === null) return ["No user message"];
+    if (!state || state.status === "loading") return [LOADING_MESSAGE];
+    if (state.status === "failed") return [FAILED_MESSAGE];
+    if (state.lastUser === null) return [NO_USER_MESSAGE];
     const wrapped = wrapMessagePreview(toMessagePreview(state.lastUser), contentWidth, MAX_PREVIEW_LINES);
-    return wrapped.truncated ? [...wrapped.lines, "… preview truncated"] : wrapped.lines;
+    return wrapped.truncated ? [...wrapped.lines, PREVIEW_TRUNCATED_HINT] : wrapped.lines;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 全文视图渲染
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 只读全文视图：沿用列表的装饰取舍，正文占满剩余高度；内容超出时
+   * 显示位置提示，并支持上下与分页滚动。
+   */
+  private renderFullMessage(width: number): string[] {
+    const view = this.fullView as FullMessageView;
+    const height = Math.max(1, this.tui.terminal.rows);
+    const chrome = chromeFor(height);
+    const fixedLines = (chrome.header ? 1 : 0) + (chrome.hint1 ? 1 : 0) + (chrome.gaps ? 2 : 0)
+      + (chrome.borders ? 2 : 0);
+    const contentBudget = Math.max(1, height - fixedLines - 1);
+
+    const lines: string[] = [];
+    if (chrome.borders) lines.push(this.renderBorder(width));
+    if (chrome.header) {
+      lines.push(this.renderTwoColumnHeader(this.theme.bold("Full message"), this.theme.fg("dim", view.title), width));
+    }
+    if (chrome.hint1) lines.push(truncateToWidth(this.fullHintLine(), width, "…"));
+    if (chrome.gaps) lines.push("");
+
+    const content = this.fullContentLines(width);
+    const scrollable = content.length > contentBudget;
+    const budget = scrollable ? Math.max(1, contentBudget - 1) : contentBudget;
+    this.fullPageRows = budget;
+    this.fullScrollMax = Math.max(0, content.length - budget);
+    view.scrollTop = Math.max(0, Math.min(this.fullScrollMax, view.scrollTop));
+    for (const line of content.slice(view.scrollTop, view.scrollTop + budget)) lines.push(line);
+    if (scrollable) lines.push(this.theme.fg("muted", `  (${view.scrollTop + 1}/${content.length})`));
+    if (chrome.gaps) lines.push("");
+    if (chrome.borders) lines.push(this.renderBorder(width));
+    return lines.map((line) => truncateToWidth(line, width, ""));
+  }
+
+  /**
+   * 全文正文：与预览相同的最后用户消息、技能简化与附件提示口径，
+   * 但不限制显示行数；未就绪与异常状态给出与预览一致的反馈。
+   */
+  private fullContentLines(width: number): string[] {
+    const view = this.fullView;
+    if (!view) return [];
+    const state = this.details.get(view.path);
+    if (!state || state.status === "loading") return [this.theme.fg("muted", LOADING_MESSAGE)];
+    if (state.status === "failed") return [this.theme.fg("muted", FAILED_MESSAGE)];
+    if (state.lastUser === null) return [this.theme.fg("muted", NO_USER_MESSAGE)];
+    const content = wrapMessageLines(toMessagePreview(state.lastUser), width);
+    return content.length ? content : [this.theme.fg("muted", EMPTY_MESSAGE)];
+  }
+
+  /** 全文视图提示：滚动与返回；其它按键在只读视图中不生效。 */
+  private fullHintLine(): string {
+    const separator = this.theme.fg("muted", " · ");
+    return this.keyHint("tui.select.up", "scroll")
+      + separator + this.keyHint("tui.select.pageUp", "page")
+      + separator + this.keyHint("tui.select.cancel", "back");
   }
 
   /** 第二行的增强信息；加载态、读取失败、无 assistant 与字段缺失各自区分。 */
@@ -660,7 +815,7 @@ class HistorySelector implements Component, Focusable {
     const session = node.session;
     const isSelected = index === this.selected;
     const hasName = hasSessionName(session);
-    const title = (session.name ?? session.firstMessage).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").trim();
+    const title = sessionTitle(session);
 
     // 右侧依次为路径、全部范围下的工作目录、相对时间；与原生顺序一致。
     const meta: string[] = [];
@@ -705,6 +860,33 @@ class HistorySelector implements Component, Focusable {
     if (this.scope === "all") return "  No sessions found";
     return "  No sessions in current folder. Press Tab to view all.";
   }
+}
+
+/** 与原生一致的会话标题文本：有名称取名称，否则取首条可读消息。 */
+function sessionTitle(session: SessionInfo): string {
+  return (session.name ?? session.firstMessage).replace(/[\x00-\x1f\x7f-\x9f]/g, " ").trim();
+}
+
+/**
+ * 按终端高度决定各装饰行的取舍：高度不足时先让位给内容。
+ * 列表与全文视图共用同一套阈值，保证两个视图的装饰行为一致。
+ */
+function chromeFor(height: number): {
+  header: boolean;
+  hint1: boolean;
+  hint2: boolean;
+  search: boolean;
+  gaps: boolean;
+  borders: boolean;
+} {
+  return {
+    header: height >= 5,
+    hint1: height >= 8,
+    hint2: height >= 9,
+    search: height >= 7,
+    gaps: height >= 11,
+    borders: height >= 13,
+  };
 }
 
 /**

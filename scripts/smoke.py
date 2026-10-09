@@ -20,8 +20,9 @@ TMUX = shutil.which("tmux")
 def save_session(directory, cwd, session_id, name, marker, ago):
     activity = int(time.time() * 1000) - ago
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(activity / 1000))
-    # 长正文用于验证原地预览的换行与截断提示；该文本也出现在会话正文中。
-    preview_lines = "\n".join(f"SMOKE PREVIEW LINE {index:02d}" for index in range(1, 11))
+    # 长正文用于验证原地预览的换行与截断提示，也用于验证全文视图能滚动到预览之外的正文。
+    # 该文本同样出现在会话正文中。
+    preview_lines = "\n".join(f"SMOKE PREVIEW LINE {index:02d}" for index in range(1, 61))
     entries = [
         {"type": "session", "version": 3, "id": session_id, "timestamp": timestamp, "cwd": str(cwd)},
         {"type": "message", "id": "user", "parentId": None, "timestamp": timestamp,
@@ -129,13 +130,34 @@ def check_interactive(host, mode, source):
     host.wait(lambda screen: "2 msgs · openai/gpt-4.1-mini" in screen,
               f"{mode} 第二行显示消息数、provider 与 model")
     assert_replaces_editor(host.screen(), mode)
-    # 原地预览最后用户消息：→ 展开并给出截断提示（长正文），← 收起。
+    # 原地预览最后用户消息：→ 展开并给出 Ctrl+O 全文入口提示，← 收起。
     host.key("Right")
-    host.wait(lambda screen: "preview truncated" in screen and "→/← preview" in screen
+    host.wait(lambda screen: "Ctrl+O full message" in screen and "→/← preview" in screen
               and "│ Isolated smoke request" in screen,
-              f"{mode} → 原地展开最后用户消息，消息体左侧带竖线并提示截断")
+              f"{mode} → 原地展开最后用户消息，消息体左侧带竖线并提示截断与全文入口")
     host.key("Left")
-    host.wait(lambda screen: "preview truncated" not in screen, f"{mode} ← 收起消息预览")
+    host.wait(lambda screen: "│ Isolated smoke request" not in screen, f"{mode} ← 收起消息预览")
+    # Ctrl+O 直接打开只读全文：正文占满高度，可遍历超出 6 行预览的第 60 行。
+    # fullscreen 下 pi 1.1.0 的 alt-screen 会先消费 PageUp/PageDown 去滚动会话视口，
+    # 内联组件收不到这两个键；用 ↑/↓ 验证同一正文仍可完整遍历。
+    host.key("C-o")
+    host.wait(lambda screen: "Full message" in screen and "Isolated smoke request" in screen
+              and "SMOKE PREVIEW LINE 20" in screen and "SMOKE PREVIEW LINE 60" not in screen
+              and "(1/61)" in screen,
+              f"{mode} Ctrl+O 打开全文并显示超出预览范围的正文")
+    if mode == "regular":
+        host.key("PageDown")
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen,
+                  f"{mode} 全文 PageDown 可遍历超屏内容")
+    else:
+        host.key(*["Down"] * 40)
+        host.wait(lambda screen: "SMOKE PREVIEW LINE 60" in screen,
+                  f"{mode} 全文 ↓ 可遍历超屏内容（alt-screen 接管了 PageUp/PageDown）")
+    # 只读：Enter 不恢复会话；Esc 返回列表；后续步骤继续验证恢复链路。
+    host.key("Enter")
+    host.key("Escape")
+    host.wait(lambda screen: "History (Current Folder)" in screen and "› History smoke target" in screen,
+              f"{mode} 全文只读且 Esc 返回列表")
     # 查询与范围切换在本切片新增，用真实宿主验证按键与输入链路。
     host.key("Tab")
     host.wait(lambda screen: "History (All)" in screen, f"{mode} 切换到全部范围")
@@ -172,7 +194,7 @@ def check_interactive(host, mode, source):
               f"{mode} 原生 /resume 仍能恢复")
     host.session("smoke-source")
     host.stop()
-    print(f"PASS {mode}: /history 打开、第二行增强信息、原地预览展开收起、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
+    print(f"PASS {mode}: /history 打开、第二行增强信息、原地预览展开收起、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
 
 
 def check_startup_resume(host, mode):

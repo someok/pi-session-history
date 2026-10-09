@@ -290,7 +290,7 @@ test("技能与图片组合显示技能名称和数量提示，不渲染图片�
   await command;
 });
 
-test("正文与换行保留、按宽度自动换行，最多 6 个显示行且超出时有截断提示", async (t) => {
+test("正文与换行保留、按宽度自动换行，最多 6 个显示行且超出时指向 Ctrl+O 全文入口", async (t) => {
   const data = await world(t);
   const nineLines = Array.from({ length: 9 }, (_, index) => `preview-line-${index + 1}`).join("\n");
   await data.save({ id: "nine", name: "Nine lines", activity: NOW - 2_000, messages: [
@@ -311,8 +311,8 @@ test("正文与换行保留、按宽度自动换行，最多 6 个显示行且�
   assert.deepEqual(preview(host, "Nine lines", ["Six lines"]), [
     "  │ preview-line-1", "  │ preview-line-2", "  │ preview-line-3",
     "  │ preview-line-4", "  │ preview-line-5", "  │ preview-line-6",
-    "  │ … preview truncated",
-  ], "超出 6 行时截断并给出提示");
+    "  │ … Ctrl+O full message",
+  ], "超出 6 行时截断并提示可用的全文入口");
   assert.doesNotMatch(host.text(), /preview-line-7/);
 
   host.press(DOWN);
@@ -327,7 +327,7 @@ test("正文与换行保留、按宽度自动换行，最多 6 个显示行且�
   const wrapped = preview(host, "CJK line");
   assert.ok(wrapped.length >= 2 && wrapped.length <= 6, `中文正文应按宽度换行：${JSON.stringify(wrapped)}`);
   assert.ok(wrapped.every((line) => visibleWidth(line) <= 40), "换行后不应越界");
-  assert.ok(!wrapped.includes("  │ … preview truncated"), "按宽度换行后未超出上限时不显示截断提示");
+  assert.ok(!wrapped.includes("  │ … Ctrl+O full message"), "按宽度换行后未超出上限时不显示全文提示");
   assert.ok(host.frame.every((line) => visibleWidth(line) <= 40));
 
   host.press("\u001b");
@@ -463,7 +463,7 @@ test("预览未就绪显示加载态，单条读取失败只影响该项", async
 
   host.press(RIGHT);
   await host.waitFor((text) => text.includes("Loading message preview..."));
-  assert.doesNotMatch(host.text(), /BROKEN PREVIEW BODY|No user message|preview truncated/,
+  assert.deepEqual(preview(host, "Good preview", ["Broken preview"]), ["  │ Loading message preview..."],
     "加载态不得用其它结果冒充");
 
   host.press(DOWN);

@@ -69,6 +69,24 @@ function imageHint(count: number): string {
   return count === 1 ? "[1 image]" : `[${count} images]`;
 }
 
+/** 附件数量提示行；没有附件时为空。 */
+function attachmentLines(preview: MessagePreview): string[] {
+  return preview.imageCount > 0 ? [imageHint(preview.imageCount)] : [];
+}
+
+/** 正文按终端显示宽度换行后的全部显示行，不施加行数上限。 */
+function wrappedTextLines(preview: MessagePreview, width: number): string[] {
+  return preview.text ? wrapTextWithAnsi(preview.text, Math.max(1, width)) : [];
+}
+
+/**
+ * 消息全文视图使用的显示行：与预览相同的正文、技能名称与附件提示口径，
+ * 但不施加 6 行上限。
+ */
+export function wrapMessageLines(preview: MessagePreview, width: number): string[] {
+  return [...wrappedTextLines(preview, width), ...attachmentLines(preview)];
+}
+
 /**
  * 按终端显示宽度换行并限制显示行数。
  *
@@ -76,11 +94,11 @@ function imageHint(count: number): string {
  */
 export function wrapMessagePreview(preview: MessagePreview, width: number, maxLines: number): PreviewLines {
   const limit = Math.max(0, maxLines);
-  const attachmentLines = preview.imageCount > 0 ? [imageHint(preview.imageCount)] : [];
-  const textBudget = Math.max(0, limit - attachmentLines.length);
-  const textLines = preview.text ? wrapTextWithAnsi(preview.text, Math.max(1, width)) : [];
+  const attachments = attachmentLines(preview);
+  const textBudget = Math.max(0, limit - attachments.length);
+  const textLines = wrappedTextLines(preview, width);
   return {
-    lines: [...textLines.slice(0, textBudget), ...attachmentLines],
+    lines: [...textLines.slice(0, textBudget), ...attachments],
     truncated: textLines.length > textBudget,
   };
 }

@@ -2,7 +2,7 @@
 
 独立的 pi 扩展命令 `/history`：浏览当前工作目录已保存的会话，选择并恢复，或取消返回原编辑器。以 **pi 1.1.0** 为兼容和行为基线，不替换原生 `/resume` 或启动时的 `pi --resume`。
 
-已交付 [Issue #2](https://github.com/someok/pi-session-history/issues/2) 的选择与恢复闭环、[Issue #3](https://github.com/someok/pi-session-history/issues/3) 的原生查询浏览、[Issue #4](https://github.com/someok/pi-session-history/issues/4) 的第二行增强信息（消息数与最后回复模型），以及 [Issue #6](https://github.com/someok/pi-session-history/issues/6) 的原地消息预览：搜索、当前目录/全部范围、排序、仅已命名筛选、路径显示与 `→`/`←` 展开收起最后用户消息。界面使用英文，说明及代码注释使用中文。
+已交付 [Issue #2](https://github.com/someok/pi-session-history/issues/2) 的选择与恢复闭环、[Issue #3](https://github.com/someok/pi-session-history/issues/3) 的原生查询浏览、[Issue #4](https://github.com/someok/pi-session-history/issues/4) 的第二行增强信息（消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6) 的原地消息预览，以及 [Issue #7](https://github.com/someok/pi-session-history/issues/7) 的 `Ctrl+O` 只读全文视图：搜索、当前目录/全部范围、排序、仅已命名筛选、路径显示、`→`/`←` 展开收起最后用户消息与全文滚动阅读。界面使用英文，说明及代码注释使用中文。
 
 ## 本地加载
 
@@ -48,6 +48,7 @@ pi install /absolute/path/to/pi-session-history
 | `Ctrl+N` | 切换仅已命名筛选 | `app.session.toggleNamedFilter` |
 | `Ctrl+P` | 切换路径显示 | `app.session.togglePath` |
 | `→` / `←` | 列表存在选中项时原地展开 / 收起最后用户消息预览 | 固定按键，优先于搜索光标 |
+| `Ctrl+O` | 直接打开选中会话的只读消息全文视图（与是否已展开无关） | 固定按键，优先于搜索输入 |
 
 这些动作及界面提示使用宿主传入的快捷键配置；重新绑定会替换默认键，空绑定列表可停用对应动作。
 
@@ -57,7 +58,11 @@ pi install /absolute/path/to/pi-session-history
 - 最后回复模型取整个历史按记录顺序最后一条 assistant 消息记录的 model/provider，不读取 `model_change` 等状态记录、不按时间戳重排，也不限于准备恢复的分支；虚拟模型显示实际处理该回复的 model/provider。错误或中止的最后一条 assistant 仍按该条显示，不回退到更早的成功回复；没有 assistant 显示 `No assistant message`，`provider/model` 中缺失的字段显示 `unknown`。
 - `→` 原地展开选中会话的消息预览，`←` 收起；允许同时展开多项，移动选中项、切换排序、筛选或范围后展开状态按会话身份保留，关闭选择器后重置。重复展开或收起幂等，不会隐式打开其它视图；无论搜索框是否为空，列表中的左右键都优先用于预览，`Ctrl+B` / `Ctrl+F` 等替代按键仍可编辑查询。
 - 消息预览取整个历史按记录顺序最后一条 user 消息，不限准备恢复的分支，也不按时间戳重排；仅含图片的最后一条仍被选中，不会回退到更早的文本。没有 user 消息时显示 `No user message`。
-- 预览保留正文与换行，按终端可用宽度换行；正文左侧以 `│ ` 竖线标记展开的消息体，加载态、失败与无 user 提示同样带标记，选中行竖线与内容一同使用选中背景。预览最多显示 6 个终端显示行；超出时追加 `… preview truncated`，不展示尚不可用的全文入口。`Ctrl+O` 全文视图属于后续切片。
+- 预览保留正文与换行，按终端可用宽度换行；正文左侧以 `│ ` 竖线标记展开的消息体，加载态、失败与无 user 提示同样带标记，选中行竖线与内容一同使用选中背景。预览最多显示 6 个终端显示行；超出时追加 `… Ctrl+O full message`，提示可直接打开的全文入口。
+- `Ctrl+O` 打开选中会话的只读消息全文视图：与是否已展开无关，也不要求增强信息已读取完成（此时先显示 `Loading message preview...`，读取完成后就地补齐）。全文与预览使用同一可读口径（最后用户消息、技能名称简化、`[1 image]` / `[N images]` 提示），只是不再限制显示行数；标题行右侧标明正在阅读的会话，正文按可用宽度换行。
+- 全文视图用 `↑`/`↓` 逐行滚动、`PageUp`/`PageDown` 翻页（均使用本机的 `tui.select.up` / `tui.select.down` / `tui.select.pageUp` / `tui.select.pageDown` 绑定），超出时在底部显示 `(n/total)` 位置提示；按 `Esc`（或本机 `tui.select.cancel` 绑定）返回列表，搜索、范围、排序、筛选、选中项、展开状态、输入焦点与可见位置原样保留，之后 `Enter` 仍恢复该会话。全文为只读：`Enter`、字符及其它列表动作在视图中不生效，不会修改正文、删除会话或触发恢复。
+- fullscreen 模式下 pi 1.1.0 的 alt-screen 会在内联自定义组件之前消费 `PageUp`/`PageDown`（用于原生会话视口滚动），内联的 /history 收不到这两个键；此时用 `↑`/`↓` 逐行遍历全文，普通 TUI 模式下两个按键都可用。这是宿主行为，未修改 pi 安装。
+- 全文内容绑定打开时的会话身份与标题；读取完成后或返回列表后，属于其它会话的迟到结果不会替换当前内容，也不会重新打开旧视图。只有技能、只有图片或空正文时分别显示技能名称、附件数量或 `(empty message)`；没有 user 消息显示 `No user message`，读取失败显示 `Could not load message preview.`，与预览口径一致且都可按 `Esc` 退出。
 - 符合 pi 技能命令展开格式的注入内容简化为 `[skill] <name>` 并保留用户请求；疑似但无法识别的技能块整段保留原文，避免误删正文。只有技能时显示技能名称，技能加附件时同时显示技能名称与附件提示。
 - 图片以 `[1 image]` / `[N images]` 数量提示呈现，不渲染图片或图片数据；图片数据在读取时即被丢弃，预览正文不另行持久化或上传。
 - 活动时间来自 `SessionManager.list()`，与原生 user/assistant 活动时间及会话头回退规则一致，不另改为文件 mtime。相对时间沿用 `now`、`m`、`h`、`d`、`w`、`mo`、`y`。
@@ -77,9 +82,9 @@ pi install /absolute/path/to/pi-session-history
 
 ### 后续切片
 
-`Ctrl+O` 全文视图（[#7](https://github.com/someok/pi-session-history/issues/7)）、重命名与删除（[#5](https://github.com/someok/pi-session-history/issues/5)），以及可见项优先的增强读取与失败隔离（[#8](https://github.com/someok/pi-session-history/issues/8)）属于后续切片。需要原生完整选择与管理功能时，继续使用 `/resume`。
+重命名与删除（[#5](https://github.com/someok/pi-session-history/issues/5)），以及可见项优先的增强读取与失败隔离（[#8](https://github.com/someok/pi-session-history/issues/8)）属于后续切片。需要原生完整选择与管理功能时，继续使用 `/resume`。
 
-本扩展不注册模型工具、不发起模型调用、不上传会话内容、不修改 session schema，也不持久化预览或其他会话副本。
+本扩展不注册模型工具、不发起模型调用、不上传会话内容、不修改 session schema，也不持久化预览、全文或其他会话副本。
 
 ## 测试
 
@@ -92,7 +97,7 @@ npm run typecheck   # 仅类型检查
 
 主要测试 seam 已按父规格确认：从**真实扩展工厂注册的 `/history`** 进入，使用临时目录中的真实 session JSONL 和真实 pi `SessionManager`，由受控宿主提供按键、终端尺寸、主题、可见输出以及会话切换结果。
 
-可复用的宿主 adapter 在 `test/host.ts`，行为测试在 `test/history.test.ts`、`test/history-search.test.ts`、`test/history-details.test.ts` 与 `test/history-preview.test.ts`。它们覆盖基础恢复、上下选择与分页、空列表、标题与活动时间语义、当前会话及选中样式、自定义快捷键、宿主取消恢复、非 TUI 防护、加载期间退出与迟到结果、缩放/主题/中文/emoji、重新打开、浏览不写入数据，模糊/短语/正则查询、默认与自定义 session 目录的范围切换、三种排序与线程层级、仅已命名筛选、路径显示、重绑定快捷键与范围切换时的迟到结果，第二行消息数与最后回复模型的口径（混合角色、分支、compaction、虚拟模型、错误/中止、字段缺失）、加载态、单条失败隔离、关闭后中止读取与重新打开重新校验，以及原地预览的左右键、替代光标按键、按记录顺序选取最后 user、技能简化与疑似技能块保留、图片数量提示、6 行上限与截断提示、多项展开与身份保持、变高列表滚动、预览加载态与失败隔离、关闭后迟到结果及重新打开重置。
+可复用的宿主 adapter 在 `test/host.ts`，行为测试在 `test/history.test.ts`、`test/history-search.test.ts`、`test/history-details.test.ts`、`test/history-preview.test.ts` 与 `test/history-full-message.test.ts`。它们覆盖基础恢复、上下选择与分页、空列表、标题与活动时间语义、当前会话及选中样式、自定义快捷键、宿主取消恢复、非 TUI 防护、加载期间退出与迟到结果、缩放/主题/中文/emoji、重新打开、浏览不写入数据，模糊/短语/正则查询、默认与自定义 session 目录的范围切换、三种排序与线程层级、仅已命名筛选、路径显示、重绑定快捷键与范围切换时的迟到结果，第二行消息数与最后回复模型的口径（混合角色、分支、compaction、虚拟模型、错误/中止、字段缺失）、加载态、单条失败隔离、关闭后中止读取与重新打开重新校验，原地预览的左右键、替代光标按键、按记录顺序选取最后 user、技能简化与疑似技能块保留、图片数量提示、6 行上限与截断提示、多项展开与身份保持、变高列表滚动、预览加载态与失败隔离、关闭后迟到结果及重新打开重置，以及全文视图的直接打开与正确选中会话、与预览一致的内容口径（技能、图片、无 user、空正文、读取失败）、逐行与翻页滚动、缩放后重新排版、`Esc` 返回逐行保留列表状态并继续恢复、只读按键隔离、加载中打开与返回后的迟到结果、中文/emoji/窄宽度/小高度/主题变化下不越界。
 
 时序测试只在公开宿主 SDK 读取 interface 上推迟**真实读取结果**的发布，或替换只负责逐行读取文件的 adapter 以控制增强信息的时序与单条故障；消息数、最后回复模型与最后用户消息的提取仍走真实实现，不替换整条会话处理流程。测试仅断言可见输出、恢复目标和取消结果；不访问扩展私有状态、不核对内部调用次数。成功切换后访问旧上下文会被测试宿主直接拒绝。
 
