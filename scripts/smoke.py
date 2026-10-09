@@ -130,11 +130,18 @@ def check_interactive(host, mode, source):
     host.wait(lambda screen: "2 msgs · openai/gpt-4.1-mini" in screen,
               f"{mode} 第二行显示消息数、provider 与 model")
     assert_replaces_editor(host.screen(), mode)
-    # 原地预览最后用户消息：→ 展开并给出 Ctrl+O 全文入口提示，← 收起。
+    # 原地预览最后用户消息：→ 展开并给出窗口范围与 Ctrl+O 全文入口提示，← 收起。
     host.key("Right")
-    host.wait(lambda screen: "Ctrl+O full message" in screen and "→/← preview" in screen
+    host.wait(lambda screen: "1-6/61" in screen and "Ctrl+O full message" in screen and "→/← preview" in screen
               and "│ Isolated smoke request" in screen,
-              f"{mode} → 原地展开最后用户消息，消息体左侧带竖线并提示截断与全文入口")
+              f"{mode} → 原地展开最后用户消息，消息体左侧带竖线并提示窗口范围与全文入口")
+    if mode == "regular":
+        # 预览内翻页：PageDown 显示后续 6 行，PageUp 回到首屏，选中项不变。
+        host.key("PageDown")
+        host.wait(lambda screen: "7-12/61" in screen and "› History smoke target" in screen,
+                  f"{mode} 预览 PageDown 显示后续正文")
+        host.key("PageUp")
+        host.wait(lambda screen: "1-6/61" in screen, f"{mode} 预览 PageUp 回到首屏")
     host.key("Left")
     host.wait(lambda screen: "│ Isolated smoke request" not in screen, f"{mode} ← 收起消息预览")
     # Ctrl+O 直接打开只读全文：正文占满高度，可遍历超出 6 行预览的第 60 行。
@@ -194,7 +201,7 @@ def check_interactive(host, mode, source):
               f"{mode} 原生 /resume 仍能恢复")
     host.session("smoke-source")
     host.stop()
-    print(f"PASS {mode}: /history 打开、第二行增强信息、原地预览展开收起、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
+    print(f"PASS {mode}: /history 打开、第二行增强信息、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
 
 
 def check_startup_resume(host, mode):

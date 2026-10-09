@@ -12,6 +12,8 @@ const RIGHT = "\u001b[C";
 const LEFT = "\u001b[D";
 const UP = "\u001b[A";
 const DOWN = "\u001b[B";
+const PAGE_UP = "\u001b[5~";
+const PAGE_DOWN = "\u001b[6~";
 const CURSOR_MARKER = "\u001b_pi:c\u0007";
 
 function user(content: unknown, timestamp: number): Record<string, unknown> {
@@ -79,6 +81,14 @@ function row(host: HistoryHost, title: string, others: readonly string[] = []): 
 /** 展开行的预览行（跳过标题行与第二行增强信息）。 */
 function preview(host: HistoryHost, title: string, others: readonly string[] = []): string[] {
   return row(host, title, others).slice(2);
+}
+
+/** 把选中项移动到指定会话；不依赖同活动时间会话间的稳定顺序。 */
+function select(host: HistoryHost, title: string): void {
+  const isSelected = () => new RegExp(`› ${title}`).test(host.text());
+  for (let step = 0; step < 20 && !isSelected(); step++) host.press(DOWN);
+  for (let step = 0; step < 20 && !isSelected(); step++) host.press(UP);
+  assert.ok(isSelected(), `未选中会话 ${title}：\n${host.text()}`);
 }
 
 test("列表 → 展开选中项、← 收起，重复操作幂等且 Enter 始终恢复会话", async (t) => {
@@ -290,7 +300,7 @@ test("技能与图片组合显示技能名称和数量提示，不渲染图片�
   await command;
 });
 
-test("正文与换行保留、按宽度自动换行，最多 6 个显示行且超出时指向 Ctrl+O 全文入口", async (t) => {
+test("正文与换行保留、按宽度自动换行，最多 6 个显示行且超出时给出窗口范围与 Ctrl+O 全文入口", async (t) => {
   const data = await world(t);
   const nineLines = Array.from({ length: 9 }, (_, index) => `preview-line-${index + 1}`).join("\n");
   await data.save({ id: "nine", name: "Nine lines", activity: NOW - 2_000, messages: [
@@ -311,8 +321,8 @@ test("正文与换行保留、按宽度自动换行，最多 6 个显示行且�
   assert.deepEqual(preview(host, "Nine lines", ["Six lines"]), [
     "  │ preview-line-1", "  │ preview-line-2", "  │ preview-line-3",
     "  │ preview-line-4", "  │ preview-line-5", "  │ preview-line-6",
-    "  │ … Ctrl+O full message",
-  ], "超出 6 行时截断并提示可用的全文入口");
+    "  │ … 1-6/9 · Ctrl+O full message",
+  ], "超出 6 行时截断并提示窗口范围与可用的全文入口");
   assert.doesNotMatch(host.text(), /preview-line-7/);
 
   host.press(DOWN);
@@ -327,8 +337,179 @@ test("正文与换行保留、按宽度自动换行，最多 6 个显示行且�
   const wrapped = preview(host, "CJK line");
   assert.ok(wrapped.length >= 2 && wrapped.length <= 6, `中文正文应按宽度换行：${JSON.stringify(wrapped)}`);
   assert.ok(wrapped.every((line) => visibleWidth(line) <= 40), "换行后不应越界");
-  assert.ok(!wrapped.includes("  │ … Ctrl+O full message"), "按宽度换行后未超出上限时不显示全文提示");
+  assert.ok(!wrapped.some((line) => /… \d+-\d+\/\d+ · Ctrl\+O full message/.test(line)),
+    "按宽度换行后未超出上限时不显示窗口范围提示");
   assert.ok(host.frame.every((line) => visibleWidth(line) <= 40));
+
+  host.press("\u001b");
+  await command;
+});
+
+test("预览溢出时 PageUp/PageDown 在窗口内翻页，到边界后继续分页列表并保留滚动位置", async (t) => {
+  const data = await world(t);
+  const long = Array.from({ length: 20 }, (_, index) => `preview-line-${String(index + 1).padStart(2, "0")}`).join("\n");
+  await data.save({ id: "above", name: "Above task", activity: NOW - 1_000, messages: [
+    user("above body", NOW - 1_000),
+  ] });
+  await data.save({ id: "long", name: "Long preview", activity: NOW - 2_000, messages: [
+    user(long, NOW - 2_000),
+  ] });
+  await data.save({ id: "short", name: "Short task", activity: NOW - 5_000, messages: [
+    user("short body", NOW - 5_000),
+  ] });
+
+  const host = new HistoryHost({ ...data, columns: 80, rows: 30 });
+  t.after(() => host.close());
+  const command = host.open();
+  await host.waitFor((text) => text.includes("Long preview") && text.includes("Short task") && !text.includes("Loading"));
+
+  const line = (index: number) => `  │ preview-line-${String(index).padStart(2, "0")}`;
+  select(host, "Long preview");
+  host.press(RIGHT);
+  assert.deepEqual(preview(host, "Long preview", ["Above task", "Short task"]), [
+    line(1), line(2), line(3), line(4), line(5), line(6),
+    "  │ … 1-6/20 · Ctrl+O full message",
+  ]);
+
+  host.press(PAGE_DOWN);
+  assert.deepEqual(preview(host, "Long preview", ["Above task", "Short task"]), [
+    line(7), line(8), line(9), line(10), line(11), line(12),
+    "  │ … 7-12/20 · Ctrl+O full message",
+  ], "PageDown 在预览窗口内翻页");
+  assert.match(host.text(), /› Long preview/, "翻页不移动列表选中项");
+
+  // 排序与筛选后滚动位置仍关联同一会话。
+  host.press("\u0013"); // Ctrl+S：切换排序
+  assert.match(host.text(), /7-12\/20/, "排序切换后滚动位置保留");
+  type(host, "long");
+  assert.match(host.text(), /7-12\/20/, "搜索过滤后滚动位置仍关联同一会话");
+  host.press("\u0015"); // Ctrl+U：清空查询
+  select(host, "Long preview");
+  assert.match(host.text(), /7-12\/20/);
+  host.press("\t"); // Tab：切换范围
+  await host.waitFor((text) => text.includes("History (All)") && !text.includes("Loading"));
+  assert.match(host.text(), /7-12\/20/, "范围切换后滚动位置仍关联同一会话");
+  host.press("\t");
+  await host.waitFor((text) => text.includes("History (Current Folder)") && !text.includes("Loading"));
+  select(host, "Long preview");
+  assert.match(host.text(), /7-12\/20/);
+
+  host.press(PAGE_DOWN);
+  host.press(PAGE_DOWN);
+  assert.deepEqual(preview(host, "Long preview", ["Above task", "Short task"]), [
+    line(15), line(16), line(17), line(18), line(19), line(20),
+    "  │ … 15-20/20 · Ctrl+O full message",
+  ], "末页按剩余行数夹紧窗口");
+
+  host.press(PAGE_DOWN);
+  assert.match(host.text(), /› Short task/, "窗口到底后继续 PageDown 回到列表分页");
+  assert.match(host.text(), /15-20\/20/, "长预览的滚动位置按会话身份保留");
+
+  select(host, "Long preview");
+  host.press(PAGE_UP);
+  assert.deepEqual(preview(host, "Long preview", ["Above task", "Short task"]), [
+    line(9), line(10), line(11), line(12), line(13), line(14),
+    "  │ … 9-14/20 · Ctrl+O full message",
+  ], "PageUp 向上翻页");
+  host.press(PAGE_UP);
+  host.press(PAGE_UP);
+  assert.match(host.text(), /1-6\/20/, "回到窗口顶部");
+  assert.match(host.text(), /› Long preview/);
+
+  host.press(PAGE_UP);
+  assert.match(host.text(), /› Above task/, "窗口到顶后继续 PageUp 回到列表分页");
+  assert.match(host.text(), /1-6\/20/, "已到顶的滚动位置保留");
+
+  // 上下键仍只移动选中项，不改变已展开预览的滚动位置。
+  host.press(DOWN);
+  assert.match(host.text(), /› Long preview/);
+  assert.match(host.text(), /1-6\/20/);
+
+  // 正文未超出窗口时不消费分页按键，仍按原语义分页列表。
+  select(host, "Above task");
+  host.press(RIGHT);
+  host.press(PAGE_DOWN);
+  assert.match(host.text(), /› Short task/, "预览未溢出时 PageDown 仍分页列表");
+
+  host.press("\u001b");
+  await command;
+});
+
+test("预览滚动时附件提示固定保留，正文窗口扣除附件行数", async (t) => {
+  const data = await world(t);
+  const body = Array.from({ length: 12 }, (_, index) => `attached-line-${String(index + 1).padStart(2, "0")}`).join("\n");
+  await data.save({ id: "attached", name: "Attached preview", activity: NOW - 2_000, messages: [
+    user([{ type: "text", text: body }, image()], NOW - 2_000),
+  ] });
+
+  const host = new HistoryHost({ ...data, columns: 60, rows: 20 });
+  t.after(() => host.close());
+  const command = host.open();
+  await host.waitFor((text) => text.includes("Attached preview") && !text.includes("Loading"));
+
+  const line = (index: number) => `  │ attached-line-${String(index).padStart(2, "0")}`;
+  select(host, "Attached preview");
+  host.press(RIGHT);
+  assert.deepEqual(preview(host, "Attached preview"), [
+    line(1), line(2), line(3), line(4), line(5), "  │ [1 image]",
+    "  │ … 1-5/12 · Ctrl+O full message",
+  ], "附件提示占一行且始终保留，正文窗口为 5 行");
+
+  host.press(PAGE_DOWN);
+  assert.deepEqual(preview(host, "Attached preview"), [
+    line(6), line(7), line(8), line(9), line(10), "  │ [1 image]",
+    "  │ … 6-10/12 · Ctrl+O full message",
+  ], "翻页后附件提示仍在");
+
+  host.press(PAGE_DOWN);
+  assert.deepEqual(preview(host, "Attached preview"), [
+    line(8), line(9), line(10), line(11), line(12), "  │ [1 image]",
+    "  │ … 8-12/12 · Ctrl+O full message",
+  ], "末页按剩余正文行数展示");
+
+  host.press(PAGE_DOWN);
+  assert.deepEqual(preview(host, "Attached preview"), [
+    line(8), line(9), line(10), line(11), line(12), "  │ [1 image]",
+    "  │ … 8-12/12 · Ctrl+O full message",
+  ], "到底后不再滚动，也不能越界");
+
+  host.press(LEFT);
+  host.press(RIGHT);
+  assert.deepEqual(preview(host, "Attached preview"), [
+    line(1), line(2), line(3), line(4), line(5), "  │ [1 image]",
+    "  │ … 1-5/12 · Ctrl+O full message",
+  ], "收起后重新展开回到窗口顶部");
+
+  host.press("\u001b");
+  await command;
+});
+
+test("预览滚动在缩放后按新宽度夹紧偏移，输出不越界", async (t) => {
+  const data = await world(t);
+  const body = Array.from({ length: 8 }, (_, index) => `wrapped-line-${index + 1}-${"x".repeat(60)}`).join("\n");
+  await data.save({ id: "wrapped", name: "Wrapped preview", activity: NOW - 2_000, messages: [
+    user(body, NOW - 2_000),
+  ] });
+
+  const host = new HistoryHost({ ...data, columns: 60, rows: 20 });
+  t.after(() => host.close());
+  const command = host.open();
+  await host.waitFor((text) => text.includes("Wrapped preview") && !text.includes("Loading"));
+
+  select(host, "Wrapped preview");
+  host.press(RIGHT);
+  const narrow = /… 1-6\/(\d+) · Ctrl\+O full message/.exec(host.text());
+  assert.ok(narrow, `窄宽度下应按宽度换行并溢出：\n${host.text()}`);
+  assert.ok(Number(narrow[1]) > 8, `正文应按宽度换行成多于 8 行：${narrow[1]}`);
+
+  host.press(PAGE_DOWN);
+  assert.match(host.text(), /… 7-12\/\d+ · Ctrl\+O full message/, "PageDown 翻页");
+
+  // 宽终端下长行不再换行，总行数变少，偏移按新内容夹紧。
+  host.resize(140, 20);
+  assert.match(host.text(), /… 3-8\/8 · Ctrl\+O full message/, "缩放后夹紧到可滚动范围");
+  assert.match(host.text(), /› Wrapped preview/, "缩放不移动选中项");
+  assert.ok(host.frame.every((line) => visibleWidth(line) <= 140), "缩放后不越界");
 
   host.press("\u001b");
   await command;

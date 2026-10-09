@@ -28,7 +28,7 @@ import {
   canonicalizePath,
   type SessionTreeNode,
 } from "./session-tree.ts";
-import { MAX_PREVIEW_LINES, toMessagePreview, wrapMessageLines, wrapMessagePreview } from "./message-preview.ts";
+import { MAX_PREVIEW_LINES, toMessagePreview, wrapMessage, wrapMessageLines } from "./message-preview.ts";
 import { readSessionDetails, type SessionDetails } from "./session-details.ts";
 
 /** 会话范围：当前工作目录，或 pi 存储内的全部会话。 */
@@ -59,8 +59,8 @@ const MAX_CONCURRENT_DETAILS_READS = 4;
 /** 展开预览左侧的竖线标记，用于在列表中区分消息体；宽度计两列。 */
 const PREVIEW_MARKER = "│ ";
 
-/** 预览被截断时指向全文视图的提示；Ctrl+O 是固定按键。 */
-const PREVIEW_TRUNCATED_HINT = "… Ctrl+O full message";
+/** 全文入口文案；Ctrl+O 是固定按键。 */
+const FULL_MESSAGE_HINT = "Ctrl+O full message";
 
 /** 消息未就绪、读取失败、无 user 与空正文的反馈；预览与全文视图共用同一口径。 */
 const LOADING_MESSAGE = "Loading message preview...";
@@ -178,6 +178,10 @@ class HistorySelector implements Component, Focusable {
    * 范围切换后仍指向同一条，关闭选择器即随实例一起重置。
    */
   private readonly expandedPreviews = new Set<string>();
+  /** 展开预览的正文滚动偏移；按会话身份关联，收起时清除。 */
+  private readonly previewScroll = new Map<string, number>();
+  /** 上一次渲染得到的正文窗口行数与最大偏移，供分页按键夹紧。 */
+  private readonly previewScrollMetrics = new Map<string, { textWindow: number; maxOffset: number }>();
   private readonly details = new Map<string, DetailsState>();
   private readonly detailsQueue: string[] = [];
   private activeDetailsReads = 0;
@@ -320,11 +324,12 @@ class HistorySelector implements Component, Focusable {
       return;
     }
     if (kb.matches(data, "tui.select.pageUp")) {
-      this.moveSelection(-this.pageRows);
+      // 先滚动选中项已展开且溢出的预览；窗口到顶后再按原语义分页列表。
+      if (!this.scrollSelectedPreview(-1)) this.moveSelection(-this.pageRows);
       return;
     }
     if (kb.matches(data, "tui.select.pageDown")) {
-      this.moveSelection(this.pageRows);
+      if (!this.scrollSelectedPreview(1)) this.moveSelection(this.pageRows);
       return;
     }
     if (kb.matches(data, "tui.select.confirm")) {
@@ -514,13 +519,19 @@ class HistorySelector implements Component, Focusable {
   /**
    * 原地展开或收起选中会话的消息预览。
    *
-   * 重复展开/收起幂等，不隐式打开全文，也不影响其它已展开项。
+   * 重复展开/收起幂等，不隐式打开全文，也不影响其它已展开项；收起时清除
+   * 该会话的滚动位置，重新展开回到窗口顶部。
    */
   private togglePreview(expand: boolean): void {
     const identity = this.selectedIdentity();
     if (identity === undefined) return;
-    if (expand) this.expandedPreviews.add(identity);
-    else this.expandedPreviews.delete(identity);
+    if (expand) {
+      this.expandedPreviews.add(identity);
+    } else {
+      this.expandedPreviews.delete(identity);
+      this.previewScroll.delete(identity);
+      this.previewScrollMetrics.delete(identity);
+    }
     this.tui.requestRender();
   }
 
@@ -728,15 +739,45 @@ class HistorySelector implements Component, Focusable {
    * 展开后的消息预览行。
    *
    * 未就绪时显示加载态，读取失败与没有 user 消息分别提示；正文保留换行并按
-   * 内容宽度换行，最多展示 MAX_PREVIEW_LINES 行，超出时附加截断提示。
+   * 内容宽度换行，窗口固定为 MAX_PREVIEW_LINES 个显示行，附件提示始终保留。
+   * 正文超出窗口时附加当前窗口范围与全文入口提示，偏移由 PageUp/PageDown 驱动。
    */
   private previewLines(session: SessionInfo, contentWidth: number): string[] {
     const state = this.details.get(session.path);
     if (!state || state.status === "loading") return [LOADING_MESSAGE];
     if (state.status === "failed") return [FAILED_MESSAGE];
     if (state.lastUser === null) return [NO_USER_MESSAGE];
-    const wrapped = wrapMessagePreview(toMessagePreview(state.lastUser), contentWidth, MAX_PREVIEW_LINES);
-    return wrapped.truncated ? [...wrapped.lines, PREVIEW_TRUNCATED_HINT] : wrapped.lines;
+    const wrapped = wrapMessage(toMessagePreview(state.lastUser), contentWidth);
+    // 附件提示始终保留，正文在扣除附件行数后的窗口里翻页。
+    const textWindow = Math.max(1, MAX_PREVIEW_LINES - wrapped.attachmentLines.length);
+    const maxOffset = Math.max(0, wrapped.textLines.length - textWindow);
+    this.previewScrollMetrics.set(session.path, { textWindow, maxOffset });
+    const offset = Math.max(0, Math.min(this.previewScroll.get(session.path) ?? 0, maxOffset));
+    this.previewScroll.set(session.path, offset);
+    const visible = wrapped.textLines.slice(offset, offset + textWindow);
+    const lines = [...visible, ...wrapped.attachmentLines];
+    if (wrapped.textLines.length <= textWindow) return lines;
+    const range = `${offset + 1}-${offset + visible.length}/${wrapped.textLines.length}`;
+    return [...lines, `… ${range} · ${FULL_MESSAGE_HINT}`];
+  }
+
+  /**
+   * 用 PageUp/PageDown 滚动选中项的展开预览。
+   *
+   * 只有选中项已展开且正文超出预览窗口时才消费按键；已经在窗口顶部或底部
+   * 时返回 false，让分页按键继续按原语义移动列表选中项。
+   */
+  private scrollSelectedPreview(direction: -1 | 1): boolean {
+    const path = this.selectedIdentity();
+    if (path === undefined || !this.expandedPreviews.has(path)) return false;
+    const metrics = this.previewScrollMetrics.get(path);
+    if (!metrics || metrics.maxOffset === 0) return false;
+    const offset = this.previewScroll.get(path) ?? 0;
+    const next = Math.max(0, Math.min(metrics.maxOffset, offset + direction * metrics.textWindow));
+    if (next === offset) return false;
+    this.previewScroll.set(path, next);
+    this.tui.requestRender();
+    return true;
   }
 
   // ---------------------------------------------------------------------------

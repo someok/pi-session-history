@@ -18,13 +18,6 @@ export interface MessagePreview {
   imageCount: number;
 }
 
-export interface PreviewLines {
-  /** 换行并截断后的预览行。 */
-  lines: string[];
-  /** 正文超过显示行数上限时为 true；提示行由调用方渲染。 */
-  truncated: boolean;
-}
-
 /**
  * 终端控制字符替换为空格，保留换行：避免用户正文里的控制序列影响布局，
  * 也不让 tab 破坏按显示宽度计算的换行。
@@ -79,26 +72,27 @@ function wrappedTextLines(preview: MessagePreview, width: number): string[] {
   return preview.text ? wrapTextWithAnsi(preview.text, Math.max(1, width)) : [];
 }
 
+/** 消息换行后的显示行，区分正文与附件提示，便于预览窗口固定附件行。 */
+export interface WrappedMessage {
+  /** 正文按显示宽度换行后的全部行。 */
+  textLines: string[];
+  /** 附件数量提示行；固定在预览末尾，不参与正文滚动。 */
+  attachmentLines: string[];
+}
+
+/** 把消息内容换行为显示行，供原地预览的滚动窗口与全文视图使用。 */
+export function wrapMessage(preview: MessagePreview, width: number): WrappedMessage {
+  return {
+    textLines: wrappedTextLines(preview, width),
+    attachmentLines: attachmentLines(preview),
+  };
+}
+
 /**
  * 消息全文视图使用的显示行：与预览相同的正文、技能名称与附件提示口径，
  * 但不施加 6 行上限。
  */
 export function wrapMessageLines(preview: MessagePreview, width: number): string[] {
-  return [...wrappedTextLines(preview, width), ...attachmentLines(preview)];
-}
-
-/**
- * 按终端显示宽度换行并限制显示行数。
- *
- * 图片数量提示属于预览内容且始终保留，正文超出剩余行数时截断并标记。
- */
-export function wrapMessagePreview(preview: MessagePreview, width: number, maxLines: number): PreviewLines {
-  const limit = Math.max(0, maxLines);
-  const attachments = attachmentLines(preview);
-  const textBudget = Math.max(0, limit - attachments.length);
-  const textLines = wrappedTextLines(preview, width);
-  return {
-    lines: [...textLines.slice(0, textBudget), ...attachments],
-    truncated: textLines.length > textBudget,
-  };
+  const wrapped = wrapMessage(preview, width);
+  return [...wrapped.textLines, ...wrapped.attachmentLines];
 }

@@ -1,6 +1,6 @@
 # /history 测试与冒烟记录
 
-对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）与 [Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）。本记录只证明这五个切片，不代表父规格中重命名与删除等后续行为已经实现。
+对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）、[Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）、[Issue #6](https://github.com/someok/pi-session-history/issues/6)（原地展开最后用户消息）、[Issue #7](https://github.com/someok/pi-session-history/issues/7)（`Ctrl+O` 只读全文视图）与 [Issue #9](https://github.com/someok/pi-session-history/issues/9)（原地预览 `PageUp`/`PageDown` 翻页）。本记录只证明这六个切片，不代表父规格中重命名与删除等后续行为已经实现。
 
 ## 环境
 
@@ -23,7 +23,7 @@ PI_BIN="$(command -v pi)" npm run test:smoke
 npm pack --dry-run
 ```
 
-`npm run check` 的结果为类型检查通过、**59 项测试通过，无失败或跳过**；其中包括非 TUI 模式、交互结束方式、第二行信息读写、原地预览与 `Ctrl+O` 全文视图的子测试。
+`npm run check` 的结果为类型检查通过、**62 项测试通过，无失败或跳过**；其中包括非 TUI 模式、交互结束方式、第二行信息读写、原地预览与 `Ctrl+O` 全文视图的子测试。
 
 `npm pack --dry-run` 只检查本地包清单，不发布 npm 包。宿主包放在 `peerDependencies` 中，由 pi 提供；开发依赖和 lockfile 将验收基线固定为 1.1.0。
 
@@ -84,7 +84,10 @@ npm pack --dry-run
 | 按记录顺序取最后 user（不限分支、不按时间戳重排、不转换其它角色）；仅图片的最后一条仍被选中 | 通过 |
 | 已识别技能注入简化为 `[skill] name`，技能加正文 / 只有技能 / 技能加附件正确；疑似技能块保留原文 | 通过 |
 | 图片显示 `[1 image]` / `[N images]` 数量提示，不渲染图片数据；无 user 显示 `No user message` | 通过 |
-| 正文与换行保留并按宽度换行，消息体左侧以 `│` 竖线标记，最多 6 个显示行，超出时提示 `… Ctrl+O full message` | 通过 |
+| 正文与换行保留并按宽度换行，消息体左侧以 `│` 竖线标记，最多 6 个显示行，超出时提示 `… 1-6/N · Ctrl+O full message` | 通过 |
+| 选中项预览溢出时 `PageUp`/`PageDown` 在窗口内翻页，到顶/到底后继续分页列表；滚动不改动选中项、`↑`/`↓` 与 `Enter` 语义不变 | 通过 |
+| 预览翻页时附件提示固定保留，正文窗口按剩余行数计算；收起后重新展开回到窗口顶部 | 通过 |
+| 排序、筛选与缩放后滚动偏移仍关联同一会话，并按新宽度夹紧；输出不越界 | 通过 |
 | 多项同时展开；移动、搜索、排序、范围切换后按会话身份保持，关闭后重置 | 通过 |
 | 展开后的变高列表按高度滚动，选中项完整可见，上下与分页可用 | 通过 |
 | 预览加载态、单条失败隔离、关闭后迟到结果无效且不修改或另存会话 | 通过 |
@@ -102,9 +105,9 @@ npm pack --dry-run
 `scripts/smoke.py` 使用专用 tmux socket 启动真实 pi CLI，普通模式以扩展文件加载，fullscreen 模式以本地包 manifest 加载。两个 pi 入口分别得到以下结果：
 
 ```text
-PASS regular: /history 打开、第二行增强信息、原地预览展开收起、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
+PASS regular: /history 打开、第二行增强信息、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
 PASS regular: pi --resume 原生启动选择器及实际恢复未替换
-PASS fullscreen: /history 打开、第二行增强信息、原地预览展开收起、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
+PASS fullscreen: /history 打开、第二行增强信息、原地预览展开收起与翻页、Ctrl+O 全文打开与滚动返回、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
 PASS fullscreen: pi --resume 原生启动选择器及实际恢复未替换
 PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均使用已清理的临时数据
 ```
@@ -115,13 +118,13 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 
 第二行增强信息同样在两种模式下实测：打开与再次打开 `/history` 后都等待出现 `2 msgs · openai/gpt-4.1-mini`（fixture 为一条 user + 一条 assistant），确认全历史 user + assistant 计数与 assistant 记录的 provider/model 在真实终端中渲染，且加载态已消失。
 
-本切片新增的原地预览也在两种模式下实测：fixture 的最后一条 user 消息包含 60 行 `SMOKE PREVIEW LINE`，打开 `/history` 后按 `→` 等待出现 `│ Isolated smoke request`、`Ctrl+O full message` 与 `→/← preview` 提示（长正文只显示 6 行正文加全文入口提示，消息体左侧带竖线），按 `←` 后提示消失，证明真实终端中的按键、竖线与截断渲染生效。
+本切片新增的原地预览也在两种模式下实测：fixture 的最后一条 user 消息包含 60 行 `SMOKE PREVIEW LINE`，打开 `/history` 后按 `→` 等待出现 `│ Isolated smoke request`、`1-6/61`、`Ctrl+O full message` 与 `→/← preview` 提示（长正文只显示 6 行正文加窗口范围与全文入口提示，消息体左侧带竖线），按 `←` 后提示消失，证明真实终端中的按键、竖线与截断渲染生效。普通模式还按 `PageDown`/`PageUp` 验证预览内翻页：`PageDown` 后提示变为 `7-12/61` 且选中项 `› History smoke target` 不变，`PageUp` 后回到 `1-6/61`；fullscreen 下分页按键被 alt-screen 接管（见下），因此只验证展开与提示。
 
 本切片新增的 `Ctrl+O` 全文视图同样在两种模式下实测：按 `Ctrl+O` 后等待出现 `Full message`、`Isolated smoke request`、`SMOKE PREVIEW LINE 20` 与 `(1/61)`，且第 60 行尚不可见（证明正文不再受 6 行上限并显示了位置提示）；普通模式按 `PageDown` 后第 60 行进入可见区，fullscreen 模式改用 `↓` 逐行滚动到同一行。在全文视图按 `Enter` 不会恢复会话，按 `Esc` 回到列表；后续步骤继续用原生 `/session` 验证恢复链路，确认只读视图未改变列表状态与恢复目标。
 
 每次打开 `/history` 时还断言会话内容仍可见，且选择器从分隔横线、标题、提示、搜索框到列表直接延伸到状态栏、其间不混入会话正文。分隔横线与原生选择器同色（dark 主题下 accent `#a798d7`），已用带颜色的终端捕获比对；控件不替换编辑器区域（例如改回 `overlay`）时，会话正文会出现在选择器与状态栏之间，该断言失败。
 
-冒烟中发现一项宿主行为：fullscreen 模式下 pi 1.1.0 的 alt-screen 会在内联自定义组件之前消费 `PageUp`/`PageDown`（它们被绑定为原生会话视口滚动），因此内联的 /history 全文视图在 fullscreen 下收不到这两个键，只能用 `↑`/`↓` 遍历；普通 TUI 模式两个按键都可用。这与 `tui-alt-screen.js` 中 `tui.altScreen.pageUp` / `pageDown`「有意遮蔽未修改的编辑器绑定」一致；扩展没有修改 pi 安装，也无法在内联组件中阻止该键被视口消费，已在 README 注明该差异。
+冒烟中发现一项宿主行为：fullscreen 模式下 pi 1.1.0 的 alt-screen 会在内联自定义组件之前消费 `PageUp`/`PageDown`（它们被绑定为原生会话视口滚动），因此内联的 /history 在 fullscreen 下收不到这两个键——原地预览无法翻页，全文视图只能用 `↑`/`↓` 遍历；普通 TUI 模式两个按键都可用。这与 `tui-alt-screen.js` 中 `tui.altScreen.pageUp` / `pageDown`「有意遮蔽未修改的编辑器绑定」一致；扩展没有修改 pi 安装，也无法在内联组件中阻止该键被视口消费，已在 README 注明该差异。
 
 ### 隔离与清理
 
