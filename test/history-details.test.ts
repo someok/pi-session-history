@@ -4,7 +4,7 @@ import test from "node:test";
 import { stripVTControlCharacters as stripAnsi } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { HistoryHost, NOW, deferred, world } from "./host.ts";
-import { SessionFileReader } from "../src/session-stats.ts";
+import { SessionFileReader } from "../src/session-details.ts";
 
 // 第二行增强信息（消息数、最后回复模型）的行为测试；沿用 test/host.ts 的公开入口 seam。
 

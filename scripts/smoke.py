@@ -20,10 +20,13 @@ TMUX = shutil.which("tmux")
 def save_session(directory, cwd, session_id, name, marker, ago):
     activity = int(time.time() * 1000) - ago
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(activity / 1000))
+    # 长正文用于验证原地预览的换行与截断提示；该文本也出现在会话正文中。
+    preview_lines = "\n".join(f"SMOKE PREVIEW LINE {index:02d}" for index in range(1, 11))
     entries = [
         {"type": "session", "version": 3, "id": session_id, "timestamp": timestamp, "cwd": str(cwd)},
         {"type": "message", "id": "user", "parentId": None, "timestamp": timestamp,
-         "message": {"role": "user", "content": "Isolated smoke request", "timestamp": activity - 1}},
+         "message": {"role": "user", "content": "Isolated smoke request\n" + preview_lines,
+                     "timestamp": activity - 1}},
         {"type": "message", "id": "assistant", "parentId": "user", "timestamp": timestamp,
          "message": {"role": "assistant", "content": [{"type": "text", "text": marker}],
                      "api": "openai-responses", "provider": "openai", "model": "gpt-4.1-mini",
@@ -126,6 +129,12 @@ def check_interactive(host, mode, source):
     host.wait(lambda screen: "2 msgs · openai/gpt-4.1-mini" in screen,
               f"{mode} 第二行显示消息数、provider 与 model")
     assert_replaces_editor(host.screen(), mode)
+    # 原地预览最后用户消息：→ 展开并给出截断提示（长正文），← 收起。
+    host.key("Right")
+    host.wait(lambda screen: "preview truncated" in screen and "→/← preview" in screen,
+              f"{mode} → 原地展开最后用户消息并提示截断")
+    host.key("Left")
+    host.wait(lambda screen: "preview truncated" not in screen, f"{mode} ← 收起消息预览")
     # 查询与范围切换在本切片新增，用真实宿主验证按键与输入链路。
     host.key("Tab")
     host.wait(lambda screen: "History (All)" in screen, f"{mode} 切换到全部范围")
@@ -162,7 +171,7 @@ def check_interactive(host, mode, source):
               f"{mode} 原生 /resume 仍能恢复")
     host.session("smoke-source")
     host.stop()
-    print(f"PASS {mode}: /history 打开、第二行增强信息、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
+    print(f"PASS {mode}: /history 打开、第二行增强信息、原地预览展开收起、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
 
 
 def check_startup_resume(host, mode):

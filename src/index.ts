@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   Input,
+  matchesKey,
   truncateToWidth,
   visibleWidth,
   type Component,
@@ -27,7 +28,8 @@ import {
   canonicalizePath,
   type SessionTreeNode,
 } from "./session-tree.ts";
-import { readSessionStats, type SessionStats } from "./session-stats.ts";
+import { MAX_PREVIEW_LINES, toMessagePreview, wrapMessagePreview } from "./message-preview.ts";
+import { readSessionDetails, type SessionDetails } from "./session-details.ts";
 
 /** 会话范围：当前工作目录，或 pi 存储内的全部会话。 */
 type Scope = "current" | "all";
@@ -46,13 +48,13 @@ interface ScopeState {
 }
 
 /** 单条会话增强信息的加载状态；未就绪时渲染加载态，不伪造 0、unknown 或无消息。 */
-type StatsState =
+type DetailsState =
   | { status: "loading" }
   | { status: "failed" }
-  | ({ status: "ready" } & SessionStats);
+  | ({ status: "ready" } & SessionDetails);
 
 /** 并发读取增强信息的条数上限；关闭选择器时会中止全部读取。 */
-const MAX_CONCURRENT_STATS_READS = 4;
+const MAX_CONCURRENT_DETAILS_READS = 4;
 
 interface HistorySelectorOptions {
   tui: TUI;
@@ -149,10 +151,15 @@ class HistorySelector implements Component, Focusable {
   private viewportHeight = 1;
   private pageRows = 1;
   private searchFocused = false;
-  private readonly stats = new Map<string, StatsState>();
-  private readonly statsQueue: string[] = [];
-  private activeStatsReads = 0;
-  private readonly statsAbort = new AbortController();
+  /**
+   * 已展开消息预览的会话身份（会话文件路径）；按身份关联，排序、筛选和
+   * 范围切换后仍指向同一条，关闭选择器即随实例一起重置。
+   */
+  private readonly expandedPreviews = new Set<string>();
+  private readonly details = new Map<string, DetailsState>();
+  private readonly detailsQueue: string[] = [];
+  private activeDetailsReads = 0;
+  private readonly detailsAbort = new AbortController();
 
   constructor(options: HistorySelectorOptions) {
     this.tui = options.tui;
@@ -299,6 +306,15 @@ class HistorySelector implements Component, Focusable {
       this.finish();
       return;
     }
+    // 列表中的 ←/→ 专用于原地展开与收起最后用户消息；Ctrl+B、Ctrl+F 等
+    // 替代按键仍交给搜索框，查询保持可编辑。
+    if (this.nodes.length > 0) {
+      const expand = matchesKey(data, "right");
+      if (expand || matchesKey(data, "left")) {
+        this.togglePreview(expand);
+        return;
+      }
+    }
     this.searchInput.handleInput(data);
     this.refreshFilter();
     this.tui.requestRender();
@@ -373,39 +389,39 @@ class HistorySelector implements Component, Focusable {
   }
 
   // ---------------------------------------------------------------------------
-  // 增强信息（消息数与最后回复模型）
+  // 增强信息（消息数、最后回复模型与最后用户消息）
   // ---------------------------------------------------------------------------
 
   /** 为尚未读取的会话排队，每条只请求一次；列表渐进更新时同样适用。 */
-  private requestStats(sessions: readonly SessionInfo[]): void {
+  private requestDetails(sessions: readonly SessionInfo[]): void {
     if (this.closed) return;
     for (const session of sessions) {
-      if (this.stats.has(session.path)) continue;
-      this.stats.set(session.path, { status: "loading" });
-      this.statsQueue.push(session.path);
+      if (this.details.has(session.path)) continue;
+      this.details.set(session.path, { status: "loading" });
+      this.detailsQueue.push(session.path);
     }
-    this.pumpStats();
+    this.pumpDetails();
   }
 
   /** 以有限并发读取排队中的会话；关闭选择器后不再补位。 */
-  private pumpStats(): void {
-    while (!this.closed && this.activeStatsReads < MAX_CONCURRENT_STATS_READS && this.statsQueue.length > 0) {
-      const path = this.statsQueue.shift() as string;
-      this.activeStatsReads++;
-      void readSessionStats(path, this.statsAbort.signal).then(
-        (result) => this.applyStats(path, { status: "ready", ...result }),
-        () => this.applyStats(path, { status: "failed" }),
+  private pumpDetails(): void {
+    while (!this.closed && this.activeDetailsReads < MAX_CONCURRENT_DETAILS_READS && this.detailsQueue.length > 0) {
+      const path = this.detailsQueue.shift() as string;
+      this.activeDetailsReads++;
+      void readSessionDetails(path, this.detailsAbort.signal).then(
+        (result) => this.applyDetails(path, { status: "ready", ...result }),
+        () => this.applyDetails(path, { status: "failed" }),
       );
     }
   }
 
   /** 单条读取完成：只更新该条并继续排队；已关闭的界面不再接收迟到结果。 */
-  private applyStats(path: string, state: StatsState): void {
-    this.activeStatsReads--;
+  private applyDetails(path: string, state: DetailsState): void {
+    this.activeDetailsReads--;
     if (this.closed) return;
-    this.stats.set(path, state);
+    this.details.set(path, state);
     this.tui.requestRender();
-    this.pumpStats();
+    this.pumpDetails();
   }
 
   // ---------------------------------------------------------------------------
@@ -416,7 +432,7 @@ class HistorySelector implements Component, Focusable {
   private setSessions(sessions: readonly SessionInfo[]): void {
     const selectedPath = this.selectionTouched ? this.selectedPath() : undefined;
     this.visibleSessions = [...sessions];
-    this.requestStats(this.visibleSessions);
+    this.requestDetails(this.visibleSessions);
     this.refreshFilter();
     if (!this.selectionTouched) {
       this.selected = 0;
@@ -461,6 +477,29 @@ class HistorySelector implements Component, Focusable {
     this.finish(target);
   }
 
+  /**
+   * 原地展开或收起选中会话的消息预览。
+   *
+   * 重复展开/收起幂等，不隐式打开全文，也不影响其它已展开项。
+   */
+  private togglePreview(expand: boolean): void {
+    const identity = this.selectedIdentity();
+    if (identity === undefined) return;
+    if (expand) this.expandedPreviews.add(identity);
+    else this.expandedPreviews.delete(identity);
+    this.tui.requestRender();
+  }
+
+  /**
+   * 会话身份：列表项对应的会话文件路径。
+   *
+   * 同一选择器实例内路径稳定，排序、筛选与范围切换后仍指向同一条；
+   * 关闭选择器时随实例丢弃展开状态。
+   */
+  private selectedIdentity(): string | undefined {
+    return this.nodes[this.selected]?.session.path;
+  }
+
   private toggleSortMode(): void {
     // 与原生一致：threaded → recent → relevance → threaded。
     this.sortMode = this.sortMode === "threaded"
@@ -486,7 +525,7 @@ class HistorySelector implements Component, Focusable {
   private finish(result?: string): void {
     if (this.closed) return;
     this.closed = true;
-    this.statsAbort.abort();
+    this.detailsAbort.abort();
     for (const state of Object.values(this.scopeStates)) {
       state.load?.abort();
       state.load = null;
@@ -548,32 +587,59 @@ class HistorySelector implements Component, Focusable {
     const separator = this.theme.fg("muted", " · ");
     return this.keyHint("app.session.toggleSort", "sort")
       + separator + this.keyHint("app.session.toggleNamedFilter", "named")
-      + separator + this.keyHint("app.session.togglePath", `path (${this.showPath ? "on" : "off"})`);
+      + separator + this.keyHint("app.session.togglePath", `path (${this.showPath ? "on" : "off"})`)
+      + separator + this.theme.fg("dim", "→/←") + this.theme.fg("muted", " preview");
   }
 
-  /** 渲染单条会话：第一行原生识别信息，第二行消息数与最后回复模型。 */
+  /** 渲染单条会话：第一行原生识别信息，第二行增强信息，展开时追加消息预览。 */
   private renderNode(node: SessionTreeNode, index: number, width: number): string[] {
     const prefix = buildTreePrefix(node);
     const titleLine = this.renderTitleLine(node, index, width, prefix);
     const indent = Math.min(width, 2 + visibleWidth(prefix));
-    const info = truncateToWidth(this.statsText(node.session), Math.max(0, width - indent), "…");
-    let infoLine = " ".repeat(indent) + this.theme.fg("dim", info);
-    if (index === this.selected) {
-      infoLine += " ".repeat(Math.max(0, width - visibleWidth(infoLine)));
-      infoLine = this.theme.bg("selectedBg", infoLine);
+    const selected = index === this.selected;
+    const lines = [titleLine, this.renderIndentedLine(this.detailsText(node.session), width, indent, selected)];
+    if (this.expandedPreviews.has(node.session.path)) {
+      for (const text of this.previewLines(node.session, width, indent)) {
+        lines.push(this.renderIndentedLine(text, width, indent, selected));
+      }
     }
-    return [titleLine, truncateToWidth(infoLine, width, "")];
+    return lines;
+  }
+
+  /** 缩进的附加行；选中行铺满选中背景，保持连续高亮。 */
+  private renderIndentedLine(text: string, width: number, indent: number, selected: boolean): string {
+    let line = " ".repeat(indent) + this.theme.fg("dim", truncateToWidth(text, Math.max(0, width - indent), "…"));
+    if (selected) {
+      line += " ".repeat(Math.max(0, width - visibleWidth(line)));
+      line = this.theme.bg("selectedBg", line);
+    }
+    return truncateToWidth(line, width, "");
+  }
+
+  /**
+   * 展开后的消息预览行。
+   *
+   * 未就绪时显示加载态，读取失败与没有 user 消息分别提示；正文保留换行并按
+   * 可用宽度换行，最多展示 MAX_PREVIEW_LINES 行，超出时附加截断提示。
+   */
+  private previewLines(session: SessionInfo, width: number, indent: number): string[] {
+    const state = this.details.get(session.path);
+    if (!state || state.status === "loading") return ["Loading message preview..."];
+    if (state.status === "failed") return ["Could not load message preview."];
+    if (state.lastUser === null) return ["No user message"];
+    const wrapped = wrapMessagePreview(toMessagePreview(state.lastUser), Math.max(1, width - indent), MAX_PREVIEW_LINES);
+    return wrapped.truncated ? [...wrapped.lines, "… preview truncated"] : wrapped.lines;
   }
 
   /** 第二行的增强信息；加载态、读取失败、无 assistant 与字段缺失各自区分。 */
-  private statsText(session: SessionInfo): string {
-    const stats = this.stats.get(session.path);
-    if (!stats || stats.status === "loading") return "Loading details...";
-    if (stats.status === "failed") return "Could not load session details.";
-    const messageCount = `${stats.messageCount} msgs`;
-    if (!stats.lastAssistant) return `${messageCount} · No assistant message`;
-    const provider = stats.lastAssistant.provider ?? "unknown";
-    const model = stats.lastAssistant.model ?? "unknown";
+  private detailsText(session: SessionInfo): string {
+    const details = this.details.get(session.path);
+    if (!details || details.status === "loading") return "Loading details...";
+    if (details.status === "failed") return "Could not load session details.";
+    const messageCount = `${details.messageCount} msgs`;
+    if (!details.lastAssistant) return `${messageCount} · No assistant message`;
+    const provider = details.lastAssistant.provider ?? "unknown";
+    const model = details.lastAssistant.model ?? "unknown";
     return `${messageCount} · ${provider}/${model}`;
   }
 

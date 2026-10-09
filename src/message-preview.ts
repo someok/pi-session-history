@@ -1,0 +1,86 @@
+import { parseSkillBlock } from "@earendil-works/pi-coding-agent";
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { UserMessageContent } from "./session-details.ts";
+
+/**
+ * 消息预览与全文视图共用的可读内容口径：保留用户正文，把已识别的技能注入
+ * 简化为技能名称，把图片附件转换为数量提示；不渲染图片数据，也不调用模型。
+ */
+
+/** 原地预览最多展示的终端显示行数；截断提示不计入该上限。 */
+export const MAX_PREVIEW_LINES = 6;
+
+/** 最后用户消息的可读内容。 */
+export interface MessagePreview {
+  /** 保留换行与正文；技能注入已简化为 `[skill] name`。 */
+  text: string;
+  /** 图片附件数量；不保留图片数据。 */
+  imageCount: number;
+}
+
+export interface PreviewLines {
+  /** 换行并截断后的预览行。 */
+  lines: string[];
+  /** 正文超过显示行数上限时为 true；提示行由调用方渲染。 */
+  truncated: boolean;
+}
+
+/**
+ * 终端控制字符替换为空格，保留换行：避免用户正文里的控制序列影响布局，
+ * 也不让 tab 破坏按显示宽度计算的换行。
+ */
+function sanitize(text: string): string {
+  return text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, " ");
+}
+
+/**
+ * 单个文本内容块的可读文本。
+ *
+ * 只有符合 pi 技能命令展开格式（公开 parseSkillBlock 语义）的块才简化为技能名称，
+ * 其余疑似技能块整段保留，避免过度清理而丢失用户正文。
+ */
+function readableText(text: string): string {
+  const skill = parseSkillBlock(text);
+  if (!skill) return text;
+  return skill.userMessage ? `[skill] ${skill.name}\n${skill.userMessage}` : `[skill] ${skill.name}`;
+}
+
+/** 把最后用户消息的原始内容转换为可读预览。 */
+export function toMessagePreview(content: UserMessageContent): MessagePreview {
+  const parts = typeof content === "string" ? [content] : content;
+  const texts: string[] = [];
+  let imageCount = 0;
+  for (const part of parts) {
+    if (typeof part === "string") {
+      texts.push(sanitize(part));
+      continue;
+    }
+    if (part.type === "image") {
+      imageCount++;
+      continue;
+    }
+    texts.push(sanitize(part.text));
+  }
+  return { text: texts.map(readableText).join("\n").trimEnd(), imageCount };
+}
+
+/** 附件的数量提示；不渲染图片或图片数据。 */
+function imageHint(count: number): string {
+  return count === 1 ? "[1 image]" : `[${count} images]`;
+}
+
+/**
+ * 按终端显示宽度换行并限制显示行数。
+ *
+ * 图片数量提示属于预览内容且始终保留，正文超出剩余行数时截断并标记。
+ */
+export function wrapMessagePreview(preview: MessagePreview, width: number, maxLines: number): PreviewLines {
+  const limit = Math.max(0, maxLines);
+  const attachmentLines = preview.imageCount > 0 ? [imageHint(preview.imageCount)] : [];
+  const textBudget = Math.max(0, limit - attachmentLines.length);
+  const textLines = preview.text ? wrapTextWithAnsi(preview.text, Math.max(1, width)) : [];
+  return {
+    lines: [...textLines.slice(0, textBudget), ...attachmentLines],
+    truncated: textLines.length > textBudget,
+  };
+}
