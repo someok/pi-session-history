@@ -4,12 +4,17 @@
   "description": "通过独立 /history 命令选择并恢复 pi 会话",
   "type": "module",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/someok/pi-session-history.git"
   },
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "pi-extension",
+    "pi-session-history"
   ],
   "engines": {
     "node": ">=22.19.0"
