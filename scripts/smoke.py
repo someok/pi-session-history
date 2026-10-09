@@ -122,6 +122,9 @@ def check_interactive(host, mode, source):
     host.wait(lambda screen: "History (Current Folder)" in screen and "History smoke target" in screen
               and "Original smoke task" in screen and "SOURCE_TRANSCRIPT" in screen
               and "Loading" not in screen, f"{mode} 打开 /history 且会话内容仍可见")
+    # 第二行展示全历史 user + assistant 消息数与最后回复模型。
+    host.wait(lambda screen: "2 msgs · gpt-4.1-mini · openai" in screen,
+              f"{mode} 第二行显示消息数与最后回复模型")
     assert_replaces_editor(host.screen(), mode)
     # 查询与范围切换在本切片新增，用真实宿主验证按键与输入链路。
     host.key("Tab")
@@ -144,6 +147,8 @@ def check_interactive(host, mode, source):
     host.command("/history")
     host.wait(lambda screen: "› History smoke target" in screen and "SOURCE_TRANSCRIPT" in screen
               and "Loading" not in screen, f"{mode} 再次打开 /history")
+    host.wait(lambda screen: "2 msgs · gpt-4.1-mini · openai" in screen,
+              f"{mode} 再次打开时第二行仍然就绪")
     host.key("Enter")
     host.wait(lambda screen: "TARGET_TRANSCRIPT" in screen and "History (Current Folder)" not in screen,
               f"{mode} 实际恢复目标会话")
@@ -157,7 +162,7 @@ def check_interactive(host, mode, source):
               f"{mode} 原生 /resume 仍能恢复")
     host.session("smoke-source")
     host.stop()
-    print(f"PASS {mode}: /history 打开、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
+    print(f"PASS {mode}: /history 打开、第二行增强信息、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换")
 
 
 def check_startup_resume(host, mode):

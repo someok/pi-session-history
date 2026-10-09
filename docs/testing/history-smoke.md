@@ -1,6 +1,6 @@
 # /history 测试与冒烟记录
 
-对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）与 [Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）。本记录只证明这两个切片，不代表父规格中第二行信息、消息预览与全文视图、重命名与删除等后续行为已经实现。
+对应工作项：[Issue #2](https://github.com/someok/pi-session-history/issues/2)（选择与恢复闭环）、[Issue #3](https://github.com/someok/pi-session-history/issues/3)（原生查询浏览）与 [Issue #4](https://github.com/someok/pi-session-history/issues/4)（第二行消息数与最后回复模型）。本记录只证明这三个切片，不代表父规格中消息预览与全文视图、重命名与删除等后续行为已经实现。
 
 ## 环境
 
@@ -23,7 +23,7 @@ PI_BIN="$(command -v pi)" npm run test:smoke
 npm pack --dry-run
 ```
 
-`npm run check` 的结果为类型检查通过、**33 项测试通过，无失败或跳过**；其中包括非 TUI 模式及交互结束方式的子测试。
+`npm run check` 的结果为类型检查通过、**40 项测试通过，无失败或跳过**；其中包括非 TUI 模式、交互结束方式及第二行信息读写的子测试。
 
 `npm pack --dry-run` 只检查本地包清单，不发布 npm 包。宿主包放在 `peerDependencies` 中，由 pi 提供；开发依赖和 lockfile 将验收基线固定为 1.1.0。
 
@@ -35,6 +35,7 @@ npm pack --dry-run
 - 成功恢复时使用真实 `SessionManager.open()` 载入目标，并使原上下文失效；若扩展继续读取旧上下文，测试失败。
 - 宿主取消恢复时保留原会话，测试确认英文取消反馈，而非成功反馈。
 - 时序场景在公开 SDK 读取 interface 上控制真实读取结果的发布时机，不 mock 整个会话处理流程。
+- 第二行增强信息的时序与单条故障仅在文件逐行读取 adapter（`SessionFileReader.lines`）上控制；消息数与最后回复模型的提取仍使用真实实现，不暴露也不断言解析器、缓存或列表状态的内部结构。
 - 关闭后任何旧界面渲染请求都会被 adapter 标记；测试确认迟到结果既不重开界面，也不更新已恢复的原编辑器。
 - 断言对象是可见文本、ANSI 语义样式、显示宽高、恢复目标及外部文件是否改变，不读取扩展私有字段或内部调用次数。
 - 宿主记录 `ctx.ui.custom()` 的呈现方式：`inline` 替换编辑器区域，会遮住会话内容的 `overlay` 会让回归测试失败。
@@ -71,15 +72,22 @@ npm pack --dry-run
 | 输入查询后到达的完整结果按会话身份保留选中项 | 通过 |
 | 查询后恢复正确目标；只注册 `/history`，不注册或替换 `/resume` | 通过 |
 | 中文/emoji 查询后的缩放、主题变化与选中项可见 | 通过 |
+| 每条会话默认两行；第一行不再重复显示消息数；第二行依次为 `msgs`、model、provider | 通过 |
+| 消息数只计全历史 user + assistant，含分支、compaction 前记录与仅含工具调用的 assistant；工具结果、system、bash、自定义消息及嵌套调用不计入 | 通过 |
+| 最后回复模型按记录顺序取最后一条 assistant；选择模型 B 未发消息、虚拟模型、错误/中止均使用该条记录；无 assistant 与字段缺失分别提示 | 通过 |
+| 第二行加载态与真实 `0 msgs`、`unknown`、`No assistant message` 分开 | 通过 |
+| 单条增强信息读取失败只标记该条，其他会话仍可选择和恢复 | 通过 |
+| 关闭选择器中止未完成读取，迟到结果不更新旧界面；重新打开重新校验会话内容 | 通过 |
+| 双行条目按终端高度滚动，选中项两行完整可见且不越界 | 通过 |
 
 ## 真实宿主冒烟
 
 `scripts/smoke.py` 使用专用 tmux socket 启动真实 pi CLI，普通模式以扩展文件加载，fullscreen 模式以本地包 manifest 加载。两个 pi 入口分别得到以下结果：
 
 ```text
-PASS regular: /history 打开、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
+PASS regular: /history 打开、第二行增强信息、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
 PASS regular: pi --resume 原生启动选择器及实际恢复未替换
-PASS fullscreen: /history 打开、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
+PASS fullscreen: /history 打开、第二行增强信息、选择、取消、真实恢复；原生 /resume 选择器及恢复未替换
 PASS fullscreen: pi --resume 原生启动选择器及实际恢复未替换
 PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均使用已清理的临时数据
 ```
@@ -87,6 +95,8 @@ PASS pi 1.1.0: CLI/原生选择器文件哈希未变；全部配置和会话均�
 恢复前后通过原生 `/session` 观察会话 ID，分别为 `smoke-source` 和 `smoke-target`；不是仅观察一次切换函数调用。原生选择器另外断言其 `Resume Session (Current Folder)` 标题、`Threaded` 排序和原生正则搜索提示，并实际选择恢复。
 
 本切片新增的查询路径也在两种模式下实测：按 `Tab` 切到全部范围（标题变为 `History (All)`），输入正则 `re:^smoke-source` 后只剩匹配会话，按 `Ctrl+U` 清空查询恢复列表，再按 `Tab` 切回当前目录范围。
+
+第二行增强信息同样在两种模式下实测：打开与再次打开 `/history` 后都等待出现 `2 msgs · gpt-4.1-mini · openai`（fixture 为一条 user + 一条 assistant），确认全历史 user + assistant 计数与 assistant 记录的 model/provider 在真实终端中渲染，且加载态已消失。
 
 每次打开 `/history` 时还断言会话内容仍可见，且选择器从分隔横线、标题、提示、搜索框到列表直接延伸到状态栏、其间不混入会话正文。分隔横线与原生选择器同色（dark 主题下 accent `#a798d7`），已用带颜色的终端捕获比对；控件不替换编辑器区域（例如改回 `overlay`）时，会话正文会出现在选择器与状态栏之间，该断言失败。
 

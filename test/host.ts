@@ -289,6 +289,8 @@ export async function world(t: TestContext) {
       created?: number;
       cwd?: string;
       messages?: unknown[];
+      /** 完全自定义的条目（不含 header）；提供时忽略 messages、name 与 extraEntries。 */
+      entries?: Record<string, unknown>[];
       extraEntries?: Record<string, unknown>[];
       /** 写入目录；默认使用隔离的自定义 session 目录，传入默认存储目录可测默认场景。 */
       dir?: string;
@@ -311,15 +313,19 @@ export async function world(t: TestContext) {
         cwd: options.cwd ?? cwd, timestamp: new Date(options.created ?? activity).toISOString(),
         ...(options.parentSession ? { parentSession: options.parentSession } : {}),
       }];
-      messages.forEach((message, index) => entries.push({
-        type: "message", id: `entry-${index}`, parentId: index ? `entry-${index - 1}` : null,
-        timestamp: new Date(activity).toISOString(), message,
-      }));
-      if (options.name !== undefined) entries.push({
-        type: "session_info", id: "name", parentId: messages.length ? `entry-${messages.length - 1}` : null,
-        timestamp: new Date(NOW).toISOString(), name: options.name,
-      });
-      entries.push(...(options.extraEntries ?? []));
+      if (options.entries) {
+        entries.push(...options.entries);
+      } else {
+        messages.forEach((message, index) => entries.push({
+          type: "message", id: `entry-${index}`, parentId: index ? `entry-${index - 1}` : null,
+          timestamp: new Date(activity).toISOString(), message,
+        }));
+        if (options.name !== undefined) entries.push({
+          type: "session_info", id: "name", parentId: messages.length ? `entry-${messages.length - 1}` : null,
+          timestamp: new Date(NOW).toISOString(), name: options.name,
+        });
+        entries.push(...(options.extraEntries ?? []));
+      }
       const dir = options.dir ?? sessionDir;
       await mkdir(dir, { recursive: true });
       const path = join(dir, `${options.id}.jsonl`);

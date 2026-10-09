@@ -27,6 +27,7 @@ import {
   canonicalizePath,
   type SessionTreeNode,
 } from "./session-tree.ts";
+import { readSessionStats, type SessionStats } from "./session-stats.ts";
 
 /** 会话范围：当前工作目录，或 pi 存储内的全部会话。 */
 type Scope = "current" | "all";
@@ -43,6 +44,15 @@ interface ScopeState {
   sessions: SessionInfo[] | null;
   load: AbortController | null;
 }
+
+/** 单条会话增强信息的加载状态；未就绪时渲染加载态，不伪造 0、unknown 或无消息。 */
+type StatsState =
+  | { status: "loading" }
+  | { status: "failed" }
+  | ({ status: "ready" } & SessionStats);
+
+/** 并发读取增强信息的条数上限；关闭选择器时会中止全部读取。 */
+const MAX_CONCURRENT_STATS_READS = 4;
 
 interface HistorySelectorOptions {
   tui: TUI;
@@ -137,7 +147,12 @@ class HistorySelector implements Component, Focusable {
   private selectionTouched = false;
   private scrollTop = 0;
   private viewportHeight = 1;
+  private pageRows = 1;
   private searchFocused = false;
+  private readonly stats = new Map<string, StatsState>();
+  private readonly statsQueue: string[] = [];
+  private activeStatsReads = 0;
+  private readonly statsAbort = new AbortController();
 
   constructor(options: HistorySelectorOptions) {
     this.tui = options.tui;
@@ -205,20 +220,29 @@ class HistorySelector implements Component, Focusable {
     }
     if (showGaps) lines.push("");
 
-    const rows = this.nodes.map((node, index) => this.renderRow(node, index, width));
+    const rows = this.nodes.map((node, index) => this.renderNode(node, index, width));
     if (!rows.length) {
       lines.push(this.theme.fg(this.failed ? "error" : "muted", this.emptyMessage()));
       if (showGaps) lines.push("");
       if (showBorders) lines.push(this.renderBorder(width));
       return lines.map((line) => truncateToWidth(line, width, ""));
     }
-    // 内容超出可用行数时，用一行展示原生风格的滚动位置。
-    const scrollable = rows.length > this.viewportHeight && this.viewportHeight >= 2;
-    const visibleCount = scrollable ? this.viewportHeight - 1 : Math.min(rows.length, this.viewportHeight);
-    const selectedOnScreen = Math.max(0, Math.min(this.nodes.length - 1, this.selected));
-    const maxScroll = Math.max(0, rows.length - visibleCount);
-    this.scrollTop = Math.max(0, Math.min(selectedOnScreen - Math.floor(visibleCount / 2), maxScroll));
-    lines.push(...rows.slice(this.scrollTop, this.scrollTop + visibleCount));
+    // 双行（及后续变高）条目按终端可用行数滚动，选中项必须完整可见。
+    const rowHeights = rows.map((row) => row.length);
+    const totalLines = rowHeights.reduce((sum, rowHeight) => sum + rowHeight, 0);
+    const scrollable = totalLines > this.viewportHeight && this.viewportHeight >= 2;
+    const budget = scrollable ? this.viewportHeight - 1 : this.viewportHeight;
+    const range = visibleRows(rowHeights, this.selected, budget);
+    this.pageRows = Math.max(1, range.end - range.start);
+    this.scrollTop = range.start;
+    let rendered = 0;
+    for (let index = range.start; index < range.end && rendered < budget; index++) {
+      for (const line of rows[index]) {
+        if (rendered >= budget) break;
+        lines.push(line);
+        rendered++;
+      }
+    }
     if (scrollable) {
       lines.push(this.theme.fg("muted", `  (${this.selected + 1}/${this.nodes.length})`));
     }
@@ -260,11 +284,11 @@ class HistorySelector implements Component, Focusable {
       return;
     }
     if (kb.matches(data, "tui.select.pageUp")) {
-      this.moveSelection(-this.viewportHeight);
+      this.moveSelection(-this.pageRows);
       return;
     }
     if (kb.matches(data, "tui.select.pageDown")) {
-      this.moveSelection(this.viewportHeight);
+      this.moveSelection(this.pageRows);
       return;
     }
     if (kb.matches(data, "tui.select.confirm")) {
@@ -349,6 +373,42 @@ class HistorySelector implements Component, Focusable {
   }
 
   // ---------------------------------------------------------------------------
+  // 增强信息（消息数与最后回复模型）
+  // ---------------------------------------------------------------------------
+
+  /** 为尚未读取的会话排队，每条只请求一次；列表渐进更新时同样适用。 */
+  private requestStats(sessions: readonly SessionInfo[]): void {
+    if (this.closed) return;
+    for (const session of sessions) {
+      if (this.stats.has(session.path)) continue;
+      this.stats.set(session.path, { status: "loading" });
+      this.statsQueue.push(session.path);
+    }
+    this.pumpStats();
+  }
+
+  /** 以有限并发读取排队中的会话；关闭选择器后不再补位。 */
+  private pumpStats(): void {
+    while (!this.closed && this.activeStatsReads < MAX_CONCURRENT_STATS_READS && this.statsQueue.length > 0) {
+      const path = this.statsQueue.shift() as string;
+      this.activeStatsReads++;
+      void readSessionStats(path, this.statsAbort.signal).then(
+        (result) => this.applyStats(path, { status: "ready", ...result }),
+        () => this.applyStats(path, { status: "failed" }),
+      );
+    }
+  }
+
+  /** 单条读取完成：只更新该条并继续排队；已关闭的界面不再接收迟到结果。 */
+  private applyStats(path: string, state: StatsState): void {
+    this.activeStatsReads--;
+    if (this.closed) return;
+    this.stats.set(path, state);
+    this.tui.requestRender();
+    this.pumpStats();
+  }
+
+  // ---------------------------------------------------------------------------
   // 过滤与选择
   // ---------------------------------------------------------------------------
 
@@ -356,6 +416,7 @@ class HistorySelector implements Component, Focusable {
   private setSessions(sessions: readonly SessionInfo[]): void {
     const selectedPath = this.selectionTouched ? this.selectedPath() : undefined;
     this.visibleSessions = [...sessions];
+    this.requestStats(this.visibleSessions);
     this.refreshFilter();
     if (!this.selectionTouched) {
       this.selected = 0;
@@ -425,6 +486,7 @@ class HistorySelector implements Component, Focusable {
   private finish(result?: string): void {
     if (this.closed) return;
     this.closed = true;
+    this.statsAbort.abort();
     for (const state of Object.values(this.scopeStates)) {
       state.load?.abort();
       state.load = null;
@@ -489,7 +551,31 @@ class HistorySelector implements Component, Focusable {
       + separator + this.keyHint("app.session.togglePath", `path (${this.showPath ? "on" : "off"})`);
   }
 
-  private renderRow(node: SessionTreeNode, index: number, width: number): string {
+  /** 渲染单条会话：第一行原生识别信息，第二行消息数与最后回复模型。 */
+  private renderNode(node: SessionTreeNode, index: number, width: number): string[] {
+    const prefix = buildTreePrefix(node);
+    const titleLine = this.renderTitleLine(node, index, width, prefix);
+    const indent = Math.min(width, 2 + visibleWidth(prefix));
+    const info = truncateToWidth(this.statsText(node.session), Math.max(0, width - indent), "…");
+    let infoLine = " ".repeat(indent) + this.theme.fg("dim", info);
+    if (index === this.selected) {
+      infoLine += " ".repeat(Math.max(0, width - visibleWidth(infoLine)));
+      infoLine = this.theme.bg("selectedBg", infoLine);
+    }
+    return [titleLine, truncateToWidth(infoLine, width, "")];
+  }
+
+  /** 第二行的增强信息；加载态、读取失败、无 assistant 与字段缺失各自区分。 */
+  private statsText(session: SessionInfo): string {
+    const stats = this.stats.get(session.path);
+    if (!stats || stats.status === "loading") return "Loading details...";
+    if (stats.status === "failed") return "Could not load session details.";
+    const messageCount = `${stats.messageCount} msgs`;
+    if (!stats.lastAssistant) return `${messageCount} · No assistant message`;
+    return `${messageCount} · ${stats.lastAssistant.model ?? "unknown"} · ${stats.lastAssistant.provider ?? "unknown"}`;
+  }
+
+  private renderTitleLine(node: SessionTreeNode, index: number, width: number, prefix: string): string {
     const session = node.session;
     const isSelected = index === this.selected;
     const hasName = hasSessionName(session);
@@ -504,7 +590,6 @@ class HistorySelector implements Component, Focusable {
     const shownRight = fitSessionMeta(meta, age, Math.max(12, Math.floor(width * 0.6)));
 
     const cursor = isSelected ? this.theme.fg("accent", "› ") : "  ";
-    const prefix = buildTreePrefix(node);
     const available = width - 2 - visibleWidth(prefix) - (visibleWidth(shownRight) + 2);
     const truncatedTitle = truncateToWidth(title, Math.max(4, available), "…");
 
@@ -539,6 +624,37 @@ class HistorySelector implements Component, Focusable {
     if (this.scope === "all") return "  No sessions found";
     return "  No sessions in current folder. Press Tab to view all.";
   }
+}
+
+/**
+ * 在变高条目列表中选出完整可见的范围。
+ *
+ * 以选中项为中心分配预算：先向上占用约一半，再向下填满，最后把剩余预算补向上方。
+ * 行高超过预算时只返回选中项，由调用方按行预算截断。
+ */
+function visibleRows(heights: readonly number[], selected: number, budget: number): { start: number; end: number } {
+  if (heights.length === 0) return { start: 0, end: 0 };
+  const target = Math.max(0, Math.min(heights.length - 1, selected));
+  if (heights[target] > budget) return { start: target, end: target + 1 };
+  const halfAbove = Math.max(0, Math.floor((budget - heights[target]) / 2));
+  let start = target;
+  let usedAbove = 0;
+  while (start > 0 && usedAbove + heights[start - 1] <= halfAbove) {
+    start--;
+    usedAbove += heights[start];
+  }
+  let end = target + 1;
+  let used = usedAbove + heights[target];
+  while (end < heights.length && used + heights[end] <= budget) {
+    used += heights[end];
+    end++;
+  }
+  // 下方没有更多条目时，把剩余预算补到上方。
+  while (start > 0 && used + heights[start - 1] <= budget) {
+    start--;
+    used += heights[start];
+  }
+  return { start, end };
 }
 
 /** 与 pi 原生提示一致：macOS 上把 alt 显示为 option。 */

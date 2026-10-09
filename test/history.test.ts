@@ -86,8 +86,9 @@ test("上下选择、按可用高度分页和缩放后确认始终恢复可见�
   assert.ok(host.frame.length < host.terminal.rows, "列表应为上方会话内容保留可见空间");
   assert.match(host.text(), /› Task 01/);
   assert.doesNotMatch(host.text(), /Task 06/);
+  // 双行条目下分页步长为当前可见的会话条数（此处 2 条）。
   host.press("\u001b[6~");
-  assert.match(host.text(), /› Task 06/);
+  assert.match(host.text(), /› Task 03/);
   host.press("\u001b[5~");
   host.press("\u001b[A");
   assert.match(host.text(), /› Task 01/);
@@ -147,9 +148,9 @@ test("选择、分页、确认和取消遵循宿主自定义快捷键并停用�
   command = host.open();
   await host.waitFor((text) => text.includes("Task 01") && !text.includes("Loading"));
   host.press("d");
-  assert.match(host.text(), /› Task 06/);
+  assert.match(host.text(), /› Task 03/);
   host.press("j");
-  assert.match(host.text(), /› Task 07/);
+  assert.match(host.text(), /› Task 04/);
   host.press("k");
   host.press("u");
   host.press("j");
@@ -203,7 +204,8 @@ test("活动时间和所有相对时间桶使用原生语义，不受 mtime、�
     { role: "toolResult", content: [{ type: "text", text: "Recent tool result" }], timestamp: NOW },
   ] });
   await data.save({ id: "header-time", name: "Header fallback", messages: [], created: NOW - 14 * 86_400_000 });
-  const host = new HistoryHost({ ...data, rows: 30 });
+  // 双行布局需要更高终端才能同时看到全部会话。
+  const host = new HistoryHost({ ...data, rows: 60 });
   t.after(() => host.close());
   const command = host.open();
   await host.waitFor((text) => text.includes("Header fallback") && !text.includes("Loading"));

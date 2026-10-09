@@ -2,7 +2,7 @@
 
 独立的 pi 扩展命令 `/history`：浏览当前工作目录已保存的会话，选择并恢复，或取消返回原编辑器。以 **pi 1.1.0** 为兼容和行为基线，不替换原生 `/resume` 或启动时的 `pi --resume`。
 
-已交付 [Issue #2](https://github.com/someok/pi-session-history/issues/2) 的选择与恢复闭环，以及 [Issue #3](https://github.com/someok/pi-session-history/issues/3) 的原生查询浏览：搜索、当前目录/全部范围、排序、仅已命名筛选与路径显示。界面使用英文，说明及代码注释使用中文。
+已交付 [Issue #2](https://github.com/someok/pi-session-history/issues/2) 的选择与恢复闭环、[Issue #3](https://github.com/someok/pi-session-history/issues/3) 的原生查询浏览，以及 [Issue #4](https://github.com/someok/pi-session-history/issues/4) 的第二行增强信息（消息数与最后回复模型）：搜索、当前目录/全部范围、排序、仅已命名筛选与路径显示。界面使用英文，说明及代码注释使用中文。
 
 ## 本地加载
 
@@ -40,7 +40,7 @@ pi install /absolute/path/to/pi-session-history
 | 默认按键 | 动作 | 宿主 action |
 | --- | --- | --- |
 | `↑` / `↓` | 移动选中项 | `tui.select.up` / `tui.select.down` |
-| `PageUp` / `PageDown` | 按当前列表页长分页 | `tui.select.pageUp` / `tui.select.pageDown` |
+| `PageUp` / `PageDown` | 按当前可见的会话条数分页 | `tui.select.pageUp` / `tui.select.pageDown` |
 | `Enter` | 恢复选中的会话 | `tui.select.confirm` |
 | `Esc` / `Ctrl+C` | 取消，返回原编辑器 | `tui.select.cancel` |
 | `Tab` | 切换当前目录/全部会话 | `tui.input.tab` |
@@ -51,6 +51,9 @@ pi install /absolute/path/to/pi-session-history
 这些动作及界面提示使用宿主传入的快捷键配置；重新绑定会替换默认键，空绑定列表可停用对应动作。
 
 - 有名称时显示名称；否则使用 pi 原生的首条可读用户消息回退，包括无消息时的 `(no messages)`。
+- 每条会话默认两行：第一行沿用原生标题、活动时间及路径/工作目录，不再显示原生消息数；第二行依次显示消息数（`msgs`）、model 与 provider。
+- 消息数只统计整个持久化历史的 user + assistant 消息，包括其它历史分支与 compaction 前记录；工具结果、system、直接 bash 执行、扩展自定义消息及其他角色不计入，工具内部嵌套调用也不额外增加。
+- 最后回复模型取整个历史按记录顺序最后一条 assistant 消息记录的 model/provider，不读取 `model_change` 等状态记录、不按时间戳重排，也不限于准备恢复的分支；虚拟模型显示实际处理该回复的 model/provider。错误或中止的最后一条 assistant 仍按该条显示，不回退到更早的成功回复；没有 assistant 显示 `No assistant message`，字段缺失显示 `unknown`。
 - 活动时间来自 `SessionManager.list()`，与原生 user/assistant 活动时间及会话头回退规则一致，不另改为文件 mtime。相对时间沿用 `now`、`m`、`h`、`d`、`w`、`mo`、`y`。
 - `Tab` 在当前目录与全部范围之间切换。默认存储下全部范围扫描 pi 的 sessions 根目录；自定义 session 目录下只扫描该目录，与原生范围含义一致。
 - 线程排序（默认）无搜索时按 `parentSession` 展示父子层级，并按子树最新活动时间排序；搜索后线程与相关性排序按匹配分数升序，分数相同按活动时间降序；最近模式只过滤，保持活动时间顺序。
@@ -60,15 +63,15 @@ pi install /absolute/path/to/pi-session-history
 - `›`、加粗和 `selectedBg` 表示选中项；当前活动会话的标题使用主题 `accent`，其他命名会话使用 `warning`，与原生识别样式一致。
 - 使用当前主题和终端显示列宽裁剪；中文、emoji 与窄宽度不越界。
 - 选择器替换编辑器区域，显示在会话内容下方；上方会话内容保持可见，不会被浮层遮住。
-- 列表按终端可用高度滚动，为提示行、搜索框和上方会话内容留出空间；内容超出时在底部显示原生风格的 `(n/total)` 位置提示，缩放后保持选中项可见，不固定照搬原生 10 条。
-- 显示加载态和空列表反馈。原生读取提供渐进结果时，可先选择已加载会话；后续结果不会移走用户选择；切换范围时迟到的旧范围结果不会替换当前列表。
+- 列表按终端可用高度滚动（按双行条目的行数计算），为提示行、搜索框和上方会话内容留出空间；内容超出时在底部显示原生风格的 `(n/total)` 位置提示，分页步长为当前可见的会话条数，缩放后保持选中项两行完整可见，不固定照搬原生 10 条。
+- 显示加载态和空列表反馈。原生读取提供渐进结果时，可先选择已加载会话；后续结果不会移走用户选择；切换范围时迟到的旧范围结果不会替换当前列表。第二行增强信息未就绪时显示 `Loading details...`，不伪造 `0 msgs`、`unknown` 或 `No assistant message`；单条读取失败只把该条标记为 `Could not load session details.`，其他会话仍可选择和恢复。
 - 通过 `ctx.switchSession()` 恢复，尊重宿主取消结果；成功后不继续访问旧上下文。
-- 关闭、取消或 `session_shutdown` 会中止本次读取并释放交互，迟到结果不再更新旧界面；重新打开会重新读取保存内容。
+- 关闭、取消或 `session_shutdown` 会中止本次列表与增强信息读取并释放交互，迟到结果不再更新旧界面；重新打开会重新读取保存内容，不保留永久陈旧的缓存。
 - RPC、JSON、print 模式不启动自定义终端界面。RPC 可收到英文提示；无 UI 模式不向协议输出混入终端内容。
 
 ### 后续切片
 
-第二行消息数和最后回复模型（[#4](https://github.com/someok/pi-session-history/issues/4)）、原地消息预览与 `Ctrl+O` 全文视图（[#6](https://github.com/someok/pi-session-history/issues/6)、[#7](https://github.com/someok/pi-session-history/issues/7)）、重命名与删除（[#5](https://github.com/someok/pi-session-history/issues/5)），以及可见项优先的增强读取与失败隔离（[#8](https://github.com/someok/pi-session-history/issues/8)）属于后续切片。需要原生完整选择与管理功能时，继续使用 `/resume`。
+原地消息预览与 `Ctrl+O` 全文视图（[#6](https://github.com/someok/pi-session-history/issues/6)、[#7](https://github.com/someok/pi-session-history/issues/7)）、重命名与删除（[#5](https://github.com/someok/pi-session-history/issues/5)），以及可见项优先的增强读取与失败隔离（[#8](https://github.com/someok/pi-session-history/issues/8)）属于后续切片。需要原生完整选择与管理功能时，继续使用 `/resume`。
 
 本扩展不注册模型工具、不发起模型调用、不上传会话内容、不修改 session schema，也不持久化预览或其他会话副本。
 
@@ -83,9 +86,9 @@ npm run typecheck   # 仅类型检查
 
 主要测试 seam 已按父规格确认：从**真实扩展工厂注册的 `/history`** 进入，使用临时目录中的真实 session JSONL 和真实 pi `SessionManager`，由受控宿主提供按键、终端尺寸、主题、可见输出以及会话切换结果。
 
-可复用的宿主 adapter 在 `test/host.ts`，行为测试在 `test/history.test.ts` 与 `test/history-search.test.ts`。它们覆盖基础恢复、上下选择与分页、空列表、标题与活动时间语义、当前会话及选中样式、自定义快捷键、宿主取消恢复、非 TUI 防护、加载期间退出与迟到结果、缩放/主题/中文/emoji、重新打开、浏览不写入数据，以及模糊/短语/正则查询、默认与自定义 session 目录的范围切换、三种排序与线程层级、仅已命名筛选、路径显示、重绑定快捷键与范围切换时的迟到结果。
+可复用的宿主 adapter 在 `test/host.ts`，行为测试在 `test/history.test.ts`、`test/history-search.test.ts` 与 `test/history-details.test.ts`。它们覆盖基础恢复、上下选择与分页、空列表、标题与活动时间语义、当前会话及选中样式、自定义快捷键、宿主取消恢复、非 TUI 防护、加载期间退出与迟到结果、缩放/主题/中文/emoji、重新打开、浏览不写入数据，模糊/短语/正则查询、默认与自定义 session 目录的范围切换、三种排序与线程层级、仅已命名筛选、路径显示、重绑定快捷键与范围切换时的迟到结果，以及第二行消息数与最后回复模型的口径（混合角色、分支、compaction、虚拟模型、错误/中止、字段缺失）、加载态、单条失败隔离、关闭后中止读取与重新打开重新校验。
 
-时序测试只在公开宿主 SDK 读取 interface 上推迟**真实读取结果**的发布，不替换整条会话处理流程。测试仅断言可见输出、恢复目标和取消结果；不访问扩展私有状态、不核对内部调用次数。成功切换后访问旧上下文会被测试宿主直接拒绝。
+时序测试只在公开宿主 SDK 读取 interface 上推迟**真实读取结果**的发布，或替换只负责逐行读取文件的 adapter 以控制增强信息的时序与单条故障；计数与最后回复模型的提取仍走真实实现，不替换整条会话处理流程。测试仅断言可见输出、恢复目标和取消结果；不访问扩展私有状态、不核对内部调用次数。成功切换后访问旧上下文会被测试宿主直接拒绝。
 
 ### 真实 pi 1.1.0 冒烟
 
@@ -114,12 +117,14 @@ PI_BIN="$(command -v pi)" npm run test:smoke
 ## 项目结构
 
 ```text
-src/index.ts                   扩展工厂与选择/恢复/查询浏览流程（唯一对外入口）
+src/index.ts                   扩展工厂与选择/恢复/查询浏览/第二行信息流程（唯一对外入口）
 src/search.ts                  原生模糊、短语、正则查询与排序语义
 src/session-tree.ts            原生线程树层级与路径规范化
+src/session-stats.ts           会话消息数与最后回复模型读取（含文件流 adapter）
 test/host.ts                   可复用受控宿主与真实 JSONL fixture
 test/history.test.ts           基础闭环行为测试
 test/history-search.test.ts    查询、范围、排序、筛选与路径行为测试
+test/history-details.test.ts   第二行消息数、最后回复模型与加载/失败行为测试
 scripts/smoke.py               隔离数据下的真实 pi CLI 冒烟
 docs/specs/history-extension.md 父规格，包含尚未实施的后续切片
 ```
