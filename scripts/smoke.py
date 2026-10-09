@@ -131,8 +131,9 @@ def check_interactive(host, mode, source):
     assert_replaces_editor(host.screen(), mode)
     # 原地预览最后用户消息：→ 展开并给出截断提示（长正文），← 收起。
     host.key("Right")
-    host.wait(lambda screen: "preview truncated" in screen and "→/← preview" in screen,
-              f"{mode} → 原地展开最后用户消息并提示截断")
+    host.wait(lambda screen: "preview truncated" in screen and "→/← preview" in screen
+              and "│ Isolated smoke request" in screen,
+              f"{mode} → 原地展开最后用户消息，消息体左侧带竖线并提示截断")
     host.key("Left")
     host.wait(lambda screen: "preview truncated" not in screen, f"{mode} ← 收起消息预览")
     # 查询与范围切换在本切片新增，用真实宿主验证按键与输入链路。

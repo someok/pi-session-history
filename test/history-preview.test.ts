@@ -104,7 +104,10 @@ test("列表 → 展开选中项、← 收起，重复操作幂等且 Enter 始�
   assert.match(host.text(), /→\/← preview/, "提示行应说明左右键用于预览");
 
   host.press(RIGHT);
-  assert.deepEqual(alpha().slice(2), ["  Alpha preview body"], "→ 展开最后用户消息");
+  assert.deepEqual(alpha().slice(2), ["  │ Alpha preview body"], "→ 展开最后用户消息");
+  assert.equal(alpha().filter((line) => line.includes("│")).length, 1, "只有消息体左侧显示竖线标记");
+  const selectedPreview = host.frame.find((line) => stripAnsi(line).includes("│ Alpha preview body"))!;
+  assert.ok(selectedPreview.includes(host.theme.getBgAnsi("selectedBg")), "选中项的竖线与消息体同样使用选中背景");
   assert.equal(host.placements.length, 1, "展开不应打开其他视图");
 
   host.press(RIGHT);
@@ -197,24 +200,24 @@ test("按记录顺序选取最后 user，仅图片的最后一条仍被选中，
 
   host.press(RIGHT);
   assert.deepEqual(preview(host, "Record order", ["Late branch"]),
-    ["  later record with earlier timestamp"], "应按记录顺序而非时间戳选择最后 user");
+    ["  │ later record with earlier timestamp"], "应按记录顺序而非时间戳选择最后 user");
   assert.doesNotMatch(host.text(), /earlier record with later timestamp|COMPACTION SUMMARY TEXT/);
 
   host.press(DOWN);
   host.press(RIGHT);
-  assert.deepEqual(preview(host, "Late branch", ["Image only last"]), ["  branch user message"],
+  assert.deepEqual(preview(host, "Late branch", ["Image only last"]), ["  │ branch user message"],
     "应包含其它历史分支且不把 custom_message 当作 user");
   assert.doesNotMatch(host.text(), /main branch text|extension injected content/);
 
   host.press(DOWN);
   host.press(RIGHT);
-  assert.deepEqual(preview(host, "Image only last", ["Assistant only"]), ["  [1 image]"],
+  assert.deepEqual(preview(host, "Image only last", ["Assistant only"]), ["  │ [1 image]"],
     "仅含图片的最后 user 仍被选中，不回退到更早的文本");
   assert.doesNotMatch(host.text(), /older text request/);
 
   host.press(DOWN);
   host.press(RIGHT);
-  assert.deepEqual(preview(host, "Assistant only"), ["  No user message"]);
+  assert.deepEqual(preview(host, "Assistant only"), ["  │ No user message"]);
 
   host.press("\u001b");
   await command;
@@ -238,21 +241,21 @@ test("已识别的技能注入简化为技能名称，疑似但无法识别的�
 
   host.press(RIGHT);
   assert.deepEqual(preview(host, "Skill with request", ["Skill only"]), [
-    "  [skill] pdf-tools",
-    "  extract report.pdf",
-    "  keep this layout",
+    "  │ [skill] pdf-tools",
+    "  │ extract report.pdf",
+    "  │ keep this layout",
   ], "技能加正文应简化为技能名称并保留用户请求");
   assert.doesNotMatch(host.text(), /SECRET SKILL BODY|References are relative/);
 
   host.press(DOWN);
   host.press(RIGHT);
-  assert.deepEqual(preview(host, "Skill only", ["Unknown skill block"]), ["  [skill] code-review"],
+  assert.deepEqual(preview(host, "Skill only", ["Unknown skill block"]), ["  │ [skill] code-review"],
     "只有技能时仍显示技能名称");
   assert.doesNotMatch(host.text(), /SECRET REVIEW BODY/);
 
   host.press(DOWN);
   host.press(RIGHT);
-  assert.deepEqual(preview(host, "Unknown skill block"), ['  <skill name="mystery">unrecognized body</skill>'],
+  assert.deepEqual(preview(host, "Unknown skill block"), ['  │ <skill name="mystery">unrecognized body</skill>'],
     "无法识别的疑似技能块保留原文，避免误删正文");
 
   host.press("\u001b");
@@ -274,12 +277,12 @@ test("技能与图片组合显示技能名称和数量提示，不渲染图片�
 
   host.press(RIGHT);
   assert.deepEqual(preview(host, "Skill with image", ["Two images"]),
-    ["  [skill] vision", "  describe it", "  [1 image]"], "技能加附件应同时显示技能名称与附件数量");
+    ["  │ [skill] vision", "  │ describe it", "  │ [1 image]"], "技能加附件应同时显示技能名称与附件数量");
   assert.doesNotMatch(host.text(), /SECRET VISION BODY|AA==/);
 
   host.press(DOWN);
   host.press(RIGHT);
-  assert.deepEqual(preview(host, "Two images"), ["  two attachments", "  [2 images]"],
+  assert.deepEqual(preview(host, "Two images"), ["  │ two attachments", "  │ [2 images]"],
     "多张图片显示数量提示，不渲染图片数据");
   assert.doesNotMatch(host.text(), /AA==|data:image/);
 
@@ -306,17 +309,17 @@ test("正文与换行保留、按宽度自动换行，最多 6 个显示行且�
 
   host.press(RIGHT);
   assert.deepEqual(preview(host, "Nine lines", ["Six lines"]), [
-    "  preview-line-1", "  preview-line-2", "  preview-line-3",
-    "  preview-line-4", "  preview-line-5", "  preview-line-6",
-    "  … preview truncated",
+    "  │ preview-line-1", "  │ preview-line-2", "  │ preview-line-3",
+    "  │ preview-line-4", "  │ preview-line-5", "  │ preview-line-6",
+    "  │ … preview truncated",
   ], "超出 6 行时截断并给出提示");
   assert.doesNotMatch(host.text(), /preview-line-7/);
 
   host.press(DOWN);
   host.press(RIGHT);
   assert.deepEqual(preview(host, "Six lines", ["CJK line"]), [
-    "  exact-line-1", "  exact-line-2", "  exact-line-3",
-    "  exact-line-4", "  exact-line-5", "  exact-line-6",
+    "  │ exact-line-1", "  │ exact-line-2", "  │ exact-line-3",
+    "  │ exact-line-4", "  │ exact-line-5", "  │ exact-line-6",
   ], "正好 6 行不截断");
 
   host.press(DOWN);
@@ -324,7 +327,7 @@ test("正文与换行保留、按宽度自动换行，最多 6 个显示行且�
   const wrapped = preview(host, "CJK line");
   assert.ok(wrapped.length >= 2 && wrapped.length <= 6, `中文正文应按宽度换行：${JSON.stringify(wrapped)}`);
   assert.ok(wrapped.every((line) => visibleWidth(line) <= 40), "换行后不应越界");
-  assert.ok(!wrapped.includes("  … preview truncated"), "按宽度换行后未超出上限时不显示截断提示");
+  assert.ok(!wrapped.includes("  │ … preview truncated"), "按宽度换行后未超出上限时不显示截断提示");
   assert.ok(host.frame.every((line) => visibleWidth(line) <= 40));
 
   host.press("\u001b");

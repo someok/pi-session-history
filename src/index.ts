@@ -56,6 +56,9 @@ type DetailsState =
 /** 并发读取增强信息的条数上限；关闭选择器时会中止全部读取。 */
 const MAX_CONCURRENT_DETAILS_READS = 4;
 
+/** 展开预览左侧的竖线标记，用于在列表中区分消息体；宽度计两列。 */
+const PREVIEW_MARKER = "│ ";
+
 interface HistorySelectorOptions {
   tui: TUI;
   theme: Theme;
@@ -599,35 +602,45 @@ class HistorySelector implements Component, Focusable {
     const selected = index === this.selected;
     const lines = [titleLine, this.renderIndentedLine(this.detailsText(node.session), width, indent, selected)];
     if (this.expandedPreviews.has(node.session.path)) {
-      for (const text of this.previewLines(node.session, width, indent)) {
-        lines.push(this.renderIndentedLine(text, width, indent, selected));
+      for (const text of this.previewLines(node.session, previewContentWidth(width, indent))) {
+        lines.push(this.renderPreviewLine(text, width, indent, selected));
       }
     }
     return lines;
   }
 
-  /** 缩进的附加行；选中行铺满选中背景，保持连续高亮。 */
+  /** 缩进的增强信息行；选中行铺满选中背景，保持连续高亮。 */
   private renderIndentedLine(text: string, width: number, indent: number, selected: boolean): string {
-    let line = " ".repeat(indent) + this.theme.fg("dim", truncateToWidth(text, Math.max(0, width - indent), "…"));
-    if (selected) {
-      line += " ".repeat(Math.max(0, width - visibleWidth(line)));
-      line = this.theme.bg("selectedBg", line);
-    }
-    return truncateToWidth(line, width, "");
+    const content = this.theme.fg("dim", truncateToWidth(text, Math.max(0, width - indent), "…"));
+    return this.renderListLine(" ".repeat(indent) + content, width, selected);
+  }
+
+  /** 展开的消息体行：左侧竖线标记，正文按与换行一致的可用宽度渲染。 */
+  private renderPreviewLine(text: string, width: number, indent: number, selected: boolean): string {
+    const prefix = " ".repeat(indent) + this.theme.fg("dim", PREVIEW_MARKER);
+    const content = this.theme.fg("dim", truncateToWidth(text, previewContentWidth(width, indent), "…"));
+    return this.renderListLine(prefix + content, width, selected);
+  }
+
+  /** 选中行铺满选中背景；所有行都按可用宽度硬截断，不越界。 */
+  private renderListLine(line: string, width: number, selected: boolean): string {
+    if (!selected) return truncateToWidth(line, width, "");
+    const padded = line + " ".repeat(Math.max(0, width - visibleWidth(line)));
+    return truncateToWidth(this.theme.bg("selectedBg", padded), width, "");
   }
 
   /**
    * 展开后的消息预览行。
    *
    * 未就绪时显示加载态，读取失败与没有 user 消息分别提示；正文保留换行并按
-   * 可用宽度换行，最多展示 MAX_PREVIEW_LINES 行，超出时附加截断提示。
+   * 内容宽度换行，最多展示 MAX_PREVIEW_LINES 行，超出时附加截断提示。
    */
-  private previewLines(session: SessionInfo, width: number, indent: number): string[] {
+  private previewLines(session: SessionInfo, contentWidth: number): string[] {
     const state = this.details.get(session.path);
     if (!state || state.status === "loading") return ["Loading message preview..."];
     if (state.status === "failed") return ["Could not load message preview."];
     if (state.lastUser === null) return ["No user message"];
-    const wrapped = wrapMessagePreview(toMessagePreview(state.lastUser), Math.max(1, width - indent), MAX_PREVIEW_LINES);
+    const wrapped = wrapMessagePreview(toMessagePreview(state.lastUser), contentWidth, MAX_PREVIEW_LINES);
     return wrapped.truncated ? [...wrapped.lines, "… preview truncated"] : wrapped.lines;
   }
 
@@ -692,6 +705,14 @@ class HistorySelector implements Component, Focusable {
     if (this.scope === "all") return "  No sessions found";
     return "  No sessions in current folder. Press Tab to view all.";
   }
+}
+
+/**
+ * 展开预览正文的可用显示宽度：扣除行缩进与左侧竖线标记，
+ * 保证换行宽度与渲染宽度一致。
+ */
+function previewContentWidth(width: number, indent: number): number {
+  return Math.max(1, width - indent - visibleWidth(PREVIEW_MARKER));
 }
 
 /**
