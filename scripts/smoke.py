@@ -38,14 +38,16 @@ def save_session(directory, cwd, session_id, name, marker, ago):
 
 
 def assert_replaces_editor(screen, mode):
-    """选择器应替换编辑器区域：按键提示行下方紧邻状态栏，而不是浮层遮在上面。"""
+    """选择器应替换编辑器区域：提示行下方紧邻状态栏，而不是浮层遮在上面。"""
     lines = screen.splitlines()
     hint = next((index for index, line in enumerate(lines) if "up/down select" in line), None)
     assert hint is not None, f"{mode} 未显示 /history 按键提示：\n{screen}"
-    tail = [line for line in lines[hint + 1:] if line.strip()]
-    assert tail, f"{mode} 按键提示后没有状态栏：\n{screen}"
-    assert " • " in tail[0], (
-        f"{mode} /history 没有替换编辑器区域，按键提示后的内容是：{tail[0]!r}\n{screen}")
+    status = next((index for index in range(hint + 1, len(lines)) if " • " in lines[index]), None)
+    assert status is not None, f"{mode} 按键提示后没有状态栏：\n{screen}"
+    # 选择器自身可以有多行提示；提示与状态栏之间出现其它内容说明没有替换编辑器区域。
+    middle = [line for line in lines[hint + 1:status] if line.strip()]
+    assert all(" · " in line for line in middle), (
+        f"{mode} /history 与状态栏之间存在非提示内容：{middle!r}\n{screen}")
 
 
 class TerminalHost:
@@ -87,6 +89,10 @@ class TerminalHost:
     def key(self, *keys):
         self.tmux("send-keys", "-t", "smoke:0.0", *keys)
 
+    def type_text(self, text):
+        """只输入文本，不提交（用于搜索框）。"""
+        self.tmux("send-keys", "-t", "smoke:0.0", "-l", text)
+
     def command(self, text):
         self.tmux("send-keys", "-t", "smoke:0.0", "-l", text)
         self.key("Enter")
@@ -111,6 +117,16 @@ def check_interactive(host, mode, source):
               and "Original smoke task" in screen and "SOURCE_TRANSCRIPT" in screen
               and "Loading sessions" not in screen, f"{mode} 打开 /history 且会话内容仍可见")
     assert_replaces_editor(host.screen(), mode)
+    # 查询与范围切换在本切片新增，用真实宿主验证按键与输入链路。
+    host.key("Tab")
+    host.wait(lambda screen: "History (All)" in screen, f"{mode} 切换到全部范围")
+    host.type_text("re:^smoke-source")
+    host.wait(lambda screen: "› Original smoke task" in screen and "History smoke target" not in screen,
+              f"{mode} 搜索过滤结果")
+    host.key("C-u")
+    host.wait(lambda screen: "History smoke target" in screen, f"{mode} 清空查询恢复列表")
+    host.key("Tab")
+    host.wait(lambda screen: "History (Current Folder)" in screen, f"{mode} 切换回当前目录范围")
     host.key("Down")
     host.wait(lambda screen: "› Original smoke task" in screen, f"{mode} 向下选择")
     host.key("Up")

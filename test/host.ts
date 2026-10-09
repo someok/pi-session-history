@@ -14,8 +14,21 @@ import {
   type RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { KeybindingsManager, TUI_KEYBINDINGS, type KeybindingsConfig } from "@earendil-works/pi-tui";
+import {
+  KeybindingsManager,
+  TUI_KEYBINDINGS,
+  setKeybindings,
+  type KeybindingDefinitions,
+  type KeybindingsConfig,
+} from "@earendil-works/pi-tui";
 import history from "../src/index.ts";
+
+// 测试宿主只补齐本扩展使用的 app.session.* 动作；默认键与 pi 1.1.0 一致。
+const APP_SESSION_KEYBINDINGS: KeybindingDefinitions = {
+  "app.session.toggleNamedFilter": { defaultKeys: "ctrl+n", description: "Toggle named session filter" },
+  "app.session.togglePath": { defaultKeys: "ctrl+p", description: "Toggle session path display" },
+  "app.session.toggleSort": { defaultKeys: "ctrl+s", description: "Toggle session sort mode" },
+};
 
 export const NOW = Date.UTC(2026, 5, 1, 12);
 
@@ -52,7 +65,7 @@ export class HistoryHost {
 
   constructor(options: {
     cwd: string;
-    sessionDir: string;
+    sessionDir?: string;
     current?: string;
     mode?: ExtensionCommandContext["mode"];
     hasUI?: boolean;
@@ -61,7 +74,12 @@ export class HistoryHost {
     bindings?: KeybindingsConfig;
   }) {
     this.terminal = { columns: options.columns ?? 80, rows: options.rows ?? 18 };
-    this.keybindings = new KeybindingsManager(TUI_KEYBINDINGS, options.bindings);
+    this.keybindings = new KeybindingsManager(
+      { ...TUI_KEYBINDINGS, ...APP_SESSION_KEYBINDINGS },
+      options.bindings,
+    );
+    // 真实宿主把同一份 keybindings 设为全局；pi-tui 的 Input 依赖该全局实例。
+    setKeybindings(this.keybindings);
     this.activeSession = options.current
       ? SessionManager.open(options.current, options.sessionDir)
       : SessionManager.create(options.cwd, options.sessionDir);
@@ -111,6 +129,10 @@ export class HistoryHost {
           },
         });
         this.component = await factory(tui, theme, this.keybindings as HostKeybindingsManager, done);
+        // 真实宿主的 TUI 会把焦点交给组件；搜索框借此显示光标。
+        if ("focused" in this.component) {
+          (this.component as unknown as { focused: boolean }).focused = true;
+        }
         this.cancelCustom = () => done(undefined);
         if (!closed) this.render();
         return result.promise;
@@ -240,11 +262,25 @@ export async function world(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), "pi-history-test-"));
   const cwd = join(root, "project");
   const sessionDir = join(root, "sessions");
+  const agentDir = join(root, "agent");
   await mkdir(cwd);
   await mkdir(sessionDir);
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  t.after(() => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    return rm(root, { recursive: true, force: true });
+  });
   return {
-    root, cwd, sessionDir,
+    root, cwd, sessionDir, agentDir,
+    // 启用 pi 默认 session 存储，并返回指定项目在默认存储下对应的会话目录。
+    async defaultSessionDirFor(projectCwd: string): Promise<string> {
+      process.env.PI_CODING_AGENT_DIR = agentDir;
+      await mkdir(agentDir, { recursive: true });
+      const dir = SessionManager.create(projectCwd).getSessionDir();
+      await mkdir(dir, { recursive: true });
+      return dir;
+    },
     async save(options: {
       id: string;
       name?: string;
@@ -254,6 +290,10 @@ export async function world(t: TestContext) {
       cwd?: string;
       messages?: unknown[];
       extraEntries?: Record<string, unknown>[];
+      /** 写入目录；默认使用隔离的自定义 session 目录，传入默认存储目录可测默认场景。 */
+      dir?: string;
+      /** 父会话文件路径，用于构建线程层级。 */
+      parentSession?: string;
     }): Promise<string> {
       const activity = options.activity ?? NOW - 120_000;
       const messages = options.messages ?? [
@@ -269,6 +309,7 @@ export async function world(t: TestContext) {
       const entries: Record<string, unknown>[] = [{
         type: "session", version: 3, id: options.id,
         cwd: options.cwd ?? cwd, timestamp: new Date(options.created ?? activity).toISOString(),
+        ...(options.parentSession ? { parentSession: options.parentSession } : {}),
       }];
       messages.forEach((message, index) => entries.push({
         type: "message", id: `entry-${index}`, parentId: index ? `entry-${index - 1}` : null,
@@ -279,7 +320,9 @@ export async function world(t: TestContext) {
         timestamp: new Date(NOW).toISOString(), name: options.name,
       });
       entries.push(...(options.extraEntries ?? []));
-      const path = join(sessionDir, `${options.id}.jsonl`);
+      const dir = options.dir ?? sessionDir;
+      await mkdir(dir, { recursive: true });
+      const path = join(dir, `${options.id}.jsonl`);
       await writeFile(path, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
       return path;
     },
