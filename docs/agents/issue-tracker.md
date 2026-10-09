@@ -25,9 +25,35 @@
   `gh issue edit <number> --add-label "..."` /
   `gh issue edit <number> --remove-label "..."`。
 - 关闭：`gh issue close <number> --comment "..."`。
+  关闭只是第三步，按下方「完成并关闭 ticket」执行。
 
 技能要求“发布到 issue tracker”时，创建 GitHub issue。
 技能要求“获取相关 ticket”时，读取对应 issue 及其评论、标签。
+
+## 完成并关闭 ticket
+
+关闭前按顺序做完三步。跳过第 1、2 步，票会显示为已关闭却仍留着未勾选的验收项。
+
+1. **回填验收项**：逐条核对正文中的 `- [ ]`，只把已有证据的项改为 `- [x]`。
+   证据指测试、冒烟记录或命令输出；没有证据的项保持未勾选，并在下一步说明差距。
+
+   ```bash
+   tmp=$(mktemp)
+   gh issue view <number> --json body --jq .body > "$tmp"
+   # 逐条核对后手工修改 $tmp；不要用一次性的全局替换
+   gh issue edit <number> --body-file "$tmp"
+   rm "$tmp"
+   ```
+
+   GitHub 不会因关闭而勾选 checkbox，也不会代替核对哪些项真的完成。
+
+2. **评论记录结果**：写明实现了什么、验证命令与结果、未覆盖的范围，
+   以及改动是否已 commit/push。证据不足时不要继续下一步。
+
+3. **关闭**：`gh issue close <number> --comment "..."`。
+   若第 2 步已写完整结论，关闭评论只需一句结果与链接。
+
+整票未完成时保持 open；只完成部分验收项时，勾选已完成项并在评论里写清剩余部分。
 
 ## PR 请求入口
 
@@ -61,5 +87,5 @@ GitHub 的 issue 与 PR 共用编号空间。编号类型不明确时，
   使用文本依赖时，逐一读取阻塞项状态。
 - **领取**：会话中的首次写操作为
   `gh issue edit <number> --add-assignee @me`。
-- **完成**：先评论记录结果，再关闭 ticket，最后向 map 的
+- **完成**：按「完成并关闭 ticket」执行，并额外向 map 的
   Decisions-so-far 添加简要结论与链接。
