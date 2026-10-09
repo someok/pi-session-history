@@ -38,16 +38,22 @@ def save_session(directory, cwd, session_id, name, marker, ago):
 
 
 def assert_replaces_editor(screen, mode):
-    """选择器应替换编辑器区域：提示行下方紧邻状态栏，而不是浮层遮在上面。"""
+    """选择器应替换编辑器区域：其内容直接延伸到状态栏，而不是浮层遮在上面。"""
     lines = screen.splitlines()
-    hint = next((index for index, line in enumerate(lines) if "up/down select" in line), None)
-    assert hint is not None, f"{mode} 未显示 /history 按键提示：\n{screen}"
-    status = next((index for index in range(hint + 1, len(lines)) if " • " in lines[index]), None)
-    assert status is not None, f"{mode} 按键提示后没有状态栏：\n{screen}"
-    # 选择器自身可以有多行提示；提示与状态栏之间出现其它内容说明没有替换编辑器区域。
-    middle = [line for line in lines[hint + 1:status] if line.strip()]
-    assert all(" · " in line for line in middle), (
-        f"{mode} /history 与状态栏之间存在非提示内容：{middle!r}\n{screen}")
+    header = next((index for index, line in enumerate(lines) if "History (Current Folder)" in line), None)
+    assert header is not None, f"{mode} 未显示 /history 标题：\n{screen}"
+    assert any("re:<pattern> regex" in line for line in lines[header:]), \
+        f"{mode} 未显示 /history 搜索提示：\n{screen}"
+    status = next((index for index in range(header + 1, len(lines)) if " • " in lines[index]), None)
+    assert status is not None, f"{mode} /history 后没有状态栏：\n{screen}"
+    between = [line for line in lines[header:status] if line.strip()]
+    assert between, f"{mode} /history 没有渲染内容：\n{screen}"
+    # 选择器与状态栏之间只应有它自身的内容；混入会话正文说明它没有替换编辑器区域。
+    assert not any("SOURCE_TRANSCRIPT" in line for line in between), \
+        f"{mode} /history 与状态栏之间出现了会话内容，未替换编辑器区域：\n{screen}"
+    last = between[-1]
+    assert last.startswith(("›", "  ", ">", "(")), \
+        f"{mode} 状态栏上方不是 /history 列表内容：{last!r}\n{screen}"
 
 
 class TerminalHost:
@@ -115,7 +121,7 @@ def check_interactive(host, mode, source):
     # 选择器替换编辑器区域，会话内容仍在上方可见；overlay 会把它遮住。
     host.wait(lambda screen: "History (Current Folder)" in screen and "History smoke target" in screen
               and "Original smoke task" in screen and "SOURCE_TRANSCRIPT" in screen
-              and "Loading sessions" not in screen, f"{mode} 打开 /history 且会话内容仍可见")
+              and "Loading" not in screen, f"{mode} 打开 /history 且会话内容仍可见")
     assert_replaces_editor(host.screen(), mode)
     # 查询与范围切换在本切片新增，用真实宿主验证按键与输入链路。
     host.key("Tab")
@@ -137,7 +143,7 @@ def check_interactive(host, mode, source):
     host.session("smoke-source")
     host.command("/history")
     host.wait(lambda screen: "› History smoke target" in screen and "SOURCE_TRANSCRIPT" in screen
-              and "Loading sessions" not in screen, f"{mode} 再次打开 /history")
+              and "Loading" not in screen, f"{mode} 再次打开 /history")
     host.key("Enter")
     host.wait(lambda screen: "TARGET_TRANSCRIPT" in screen and "History (Current Folder)" not in screen,
               f"{mode} 实际恢复目标会话")

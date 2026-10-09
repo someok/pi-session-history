@@ -128,9 +128,8 @@ test("选择、分页、确认和取消遵循宿主自定义快捷键并停用�
   t.after(() => host.close());
   let command = host.open();
   await host.waitFor((text) => text.includes("Task 01") && !text.includes("Loading"));
-  assert.match(host.text(), /k\/j select/);
-  assert.match(host.text(), /u\/d page/);
-  assert.match(host.text(), /x resume · q cancel/);
+  assert.match(host.text(), /tab scope · re:<pattern> regex · "phrase" exact/);
+  assert.match(host.text(), /ctrl\+s sort · ctrl\+n named · ctrl\+p path \(off\)/);
   for (const key of ["\u001b[A", "\u001b[B", "\u001b[5~", "\u001b[6~", "\r", "\u001b"]) host.press(key);
   assert.match(host.text(), /› Task 01/);
   assert.deepEqual(host.switches, []);
@@ -227,7 +226,7 @@ test("真实读取的渐进结果先可选，迟到的新会话不会移走用�
   const command = host.open();
   await published.promise;
   assert.match(host.text(), /First available/);
-  assert.match(host.text(), /Loading sessions/);
+  assert.match(host.text(), /Loading 2\/3/);
   assert.doesNotMatch(host.text(), /Arriving latest/);
   host.press("\u001b[B");
   assert.match(host.text(), /› Chosen session/);

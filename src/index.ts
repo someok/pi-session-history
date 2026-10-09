@@ -176,19 +176,22 @@ class HistorySelector implements Component, Focusable {
 
   render(width: number): string[] {
     const height = Math.max(1, this.tui.terminal.rows);
+    // 与原生选择器一致的行顺序：标题与状态、两行提示、搜索框、列表。
     // 按可用高度取舍装饰行，保证列表始终为上方会话内容留出空间。
     const showHeader = height >= 5;
+    const showHint1 = height >= 8;
+    const showHint2 = height >= 9;
     const showSearch = height >= 7;
-    const showFooter = height >= 5;
-    const showFooterExtra = height >= 9;
-    const fixedLines = (showHeader ? 1 : 0) + (showSearch ? 1 : 0)
-      + (showFooter ? 1 : 0) + (showFooterExtra ? 1 : 0);
+    const fixedLines = (showHeader ? 1 : 0) + (showHint1 ? 1 : 0)
+      + (showHint2 ? 1 : 0) + (showSearch ? 1 : 0);
     const listBudget = Math.max(1, height - fixedLines - 1);
     const preferredVisible = Math.max(5, Math.floor(height / 2));
     this.viewportHeight = Math.max(1, Math.min(preferredVisible, listBudget));
 
     const lines: string[] = [];
     if (showHeader) lines.push(this.renderHeader(width));
+    if (showHint1) lines.push(truncateToWidth(this.hintLine1(), width, "…"));
+    if (showHint2) lines.push(truncateToWidth(this.hintLine2(), width, "…"));
     if (showSearch) {
       for (const line of this.searchInput.render(width)) {
         lines.push(truncateToWidth(line, width, ""));
@@ -196,16 +199,19 @@ class HistorySelector implements Component, Focusable {
     }
 
     const rows = this.nodes.map((node, index) => this.renderRow(node, index, width));
+    if (!rows.length) {
+      lines.push(this.theme.fg(this.failed ? "error" : "muted", this.emptyMessage()));
+      return lines.map((line) => truncateToWidth(line, width, ""));
+    }
+    // 内容超出可用行数时，用一行展示原生风格的滚动位置。
+    const scrollable = rows.length > this.viewportHeight;
+    const visibleCount = scrollable ? Math.max(1, this.viewportHeight - 1) : rows.length;
     const selectedOnScreen = Math.max(0, Math.min(this.nodes.length - 1, this.selected));
-    const maxScroll = Math.max(0, this.nodes.length - this.viewportHeight);
-    this.scrollTop = Math.max(0, Math.min(selectedOnScreen - Math.floor(this.viewportHeight / 2), maxScroll));
-    const listLines = rows.length
-      ? rows.slice(this.scrollTop, this.scrollTop + this.viewportHeight)
-      : [this.theme.fg(this.failed ? "error" : "muted", this.emptyMessage())];
-    lines.push(...listLines);
-
-    if (showFooter) {
-      lines.push(...this.footerLines().slice(0, showFooterExtra ? 2 : 1).map((line) => truncateToWidth(line, width, "…")));
+    const maxScroll = Math.max(0, rows.length - visibleCount);
+    this.scrollTop = Math.max(0, Math.min(selectedOnScreen - Math.floor(visibleCount / 2), maxScroll));
+    lines.push(...rows.slice(this.scrollTop, this.scrollTop + visibleCount));
+    if (scrollable) {
+      lines.push(this.theme.fg("muted", `  (${this.selected + 1}/${this.nodes.length})`));
     }
     return lines.map((line) => truncateToWidth(line, width, ""));
   }
@@ -420,21 +426,50 @@ class HistorySelector implements Component, Focusable {
 
   private renderHeader(width: number): string {
     const title = this.scope === "all" ? "History (All)" : "History (Current Folder)";
-    let rightText: string;
-    if (this.loading) {
-      const progress = this.progress ? ` ${this.progress.loaded}/${this.progress.total}` : "";
-      rightText = this.theme.fg("accent", `Loading sessions...${progress}`);
-    } else {
-      const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
-      rightText = this.theme.fg("muted", "Sort: ") + this.theme.fg("accent", sortLabel)
-        + "  " + this.theme.fg("muted", "Name: ") + this.theme.fg("accent", this.nameFilter === "all" ? "All" : "Named");
-    }
+    const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
+    // 与原生一致：左侧标题，右侧范围/名称/排序状态。
+    const rightText = [
+      this.scopeStatus(),
+      this.theme.fg("muted", "Name: ") + this.theme.fg("accent", this.nameFilter === "all" ? "All" : "Named"),
+      this.theme.fg("muted", "Sort: ") + this.theme.fg("accent", sortLabel),
+    ].join("  ");
     const truncatedRight = truncateToWidth(rightText, width, "");
-    const left = this.theme.bold(title);
     const availableLeft = Math.max(0, width - visibleWidth(truncatedRight) - 1);
-    const truncatedLeft = truncateToWidth(left, availableLeft, "…");
+    const truncatedLeft = truncateToWidth(this.theme.bold(title), availableLeft, "…");
     const spacing = Math.max(0, width - visibleWidth(truncatedLeft) - visibleWidth(truncatedRight));
     return truncatedLeft + " ".repeat(spacing) + truncatedRight;
+  }
+
+  /** 与原生一致的范围状态：加载中显示读取进度，否则显示当前/全部范围的选择。 */
+  private scopeStatus(): string {
+    if (this.loading) {
+      const progress = this.progress ? `${this.progress.loaded}/${this.progress.total}` : "...";
+      return this.theme.fg("muted", "○ Current Folder | ") + this.theme.fg("accent", `Loading ${progress}`);
+    }
+    const onCurrent = this.scope === "current";
+    const current = onCurrent ? this.theme.fg("accent", "◉ Current Folder") : this.theme.fg("muted", "○ Current Folder");
+    const all = onCurrent ? this.theme.fg("muted", "○ All") : this.theme.fg("accent", "◉ All");
+    return `${current}${this.theme.fg("muted", " | ")}${all}`;
+  }
+
+  /** 与原生一致的提示行：键名为 dim 色，描述为 muted 色。 */
+  private keyHint(action: Keybinding, label: string): string {
+    const keys = this.keybindings.getKeys(action);
+    const text = keys.length ? formatKeyText(keys.join("/")) : action;
+    return this.theme.fg("dim", text) + this.theme.fg("muted", ` ${label}`);
+  }
+
+  private hintLine1(): string {
+    return this.keyHint("tui.input.tab", "scope")
+      + this.theme.fg("muted", " · ")
+      + this.theme.fg("muted", 're:<pattern> regex · "phrase" exact');
+  }
+
+  private hintLine2(): string {
+    const separator = this.theme.fg("muted", " · ");
+    return this.keyHint("app.session.toggleSort", "sort")
+      + separator + this.keyHint("app.session.toggleNamedFilter", "named")
+      + separator + this.keyHint("app.session.togglePath", `path (${this.showPath ? "on" : "off"})`);
   }
 
   private renderRow(node: SessionTreeNode, index: number, width: number): string {
@@ -487,25 +522,17 @@ class HistorySelector implements Component, Focusable {
     if (this.scope === "all") return "  No sessions found";
     return "  No sessions in current folder. Press Tab to view all.";
   }
+}
 
-  private footerLines(): string[] {
-    const kb = this.keybindings;
-    const keys = (action: Keybinding) => kb.getKeys(action).join("/") || action;
-    const separator = this.theme.fg("muted", " · ");
-    const primary = [
-      `${keys("tui.select.up")}/${keys("tui.select.down")} select`,
-      `${keys("tui.select.pageUp")}/${keys("tui.select.pageDown")} page`,
-      `${keys("tui.select.confirm")} resume`,
-      `${keys("tui.select.cancel")} cancel`,
-    ].join(separator);
-    const secondary = [
-      `${keys("tui.input.tab")} scope`,
-      `${keys("app.session.toggleSort")} sort`,
-      `${keys("app.session.toggleNamedFilter")} named`,
-      `${keys("app.session.togglePath")} path (${this.showPath ? "on" : "off"})`,
-    ].join(separator);
-    return [primary, secondary];
-  }
+/** 与 pi 原生提示一致：macOS 上把 alt 显示为 option。 */
+function formatKeyText(keys: string): string {
+  return keys
+    .split("/")
+    .map((key) => key
+      .split("+")
+      .map((part) => (process.platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part))
+      .join("+"))
+    .join("/");
 }
 
 function shortenPath(path: string): string {
