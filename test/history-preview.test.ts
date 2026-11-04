@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { stripVTControlCharacters as stripAnsi } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { HistoryHost, NOW, deferred, makeTheme, world } from "./host.ts";
+import { HistoryHost, NOW, deferred, makeTheme, plainText, world } from "./host.ts";
 import { SessionFileReader } from "../src/session-details.ts";
 
 // 原地消息预览（最后用户消息）的行为测试；沿用 test/host.ts 的公开入口 seam。
@@ -14,7 +14,6 @@ const UP = "\u001b[A";
 const DOWN = "\u001b[B";
 const PAGE_UP = "\u001b[5~";
 const PAGE_DOWN = "\u001b[6~";
-const CURSOR_MARKER = "\u001b_pi:c\u0007";
 
 function user(content: unknown, timestamp: number): Record<string, unknown> {
   return { role: "user", content, timestamp };
@@ -54,7 +53,7 @@ function type(host: HistoryHost, text: string): void {
 function searchLine(host: HistoryHost): string {
   const line = host.frame.find((candidate) => stripAnsi(candidate).startsWith(">"));
   assert.ok(line, `应渲染搜索框：\n${host.text()}`);
-  return stripAnsi(line).replaceAll(CURSOR_MARKER, "").trimEnd();
+  return plainText(line).trimEnd();
 }
 
 /** 取某条会话从标题行到下一个已知标题前的可见行。 */
@@ -75,7 +74,7 @@ function row(host: HistoryHost, title: string, others: readonly string[] = []): 
     }
   }
   return host.frame.slice(start, end)
-    .map((line) => stripAnsi(line).replaceAll(CURSOR_MARKER, "").trimEnd());
+    .map((line) => plainText(line).trimEnd());
 }
 
 /** 展开行的预览行（跳过标题行与第二行增强信息）。 */

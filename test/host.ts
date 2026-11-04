@@ -32,6 +32,19 @@ const APP_SESSION_KEYBINDINGS: KeybindingDefinitions = {
 
 export const NOW = Date.UTC(2026, 5, 1, 12);
 
+/**
+ * pi-tui 的零宽光标标记：`_pi:c` 让宿主定位硬件光标，
+ * `_pi:fc` / `_pi:/fc` 包住画成光标的字符。它们不占宽度，比较文本前要去掉。
+ */
+const CURSOR_MARKERS = ["\u001b_pi:c\u0007", "\u001b_pi:fc\u0007", "\u001b_pi:/fc\u0007"];
+
+/** 去掉 ANSI 与 pi-tui 光标标记，得到可直接比较的可见文本。 */
+export function plainText(line: string): string {
+  let text = stripAnsi(line);
+  for (const marker of CURSOR_MARKERS) text = text.replaceAll(marker, "");
+  return text;
+}
+
 export function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((r) => { resolve = r; });
@@ -195,7 +208,7 @@ export class HistoryHost {
   text(): string {
     // overlay 画在会话内容上方，被遮住的内容不算可见。
     const visible = this.component && this.placement === "overlay" ? [] : this.transcript;
-    return [...visible, ...this.frame].map(stripAnsi).join("\n");
+    return [...visible, ...this.frame].map(plainText).join("\n");
   }
 
   async waitFor(predicate: (text: string) => boolean): Promise<void> {
