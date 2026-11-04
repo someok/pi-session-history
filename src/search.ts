@@ -1,9 +1,15 @@
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import { fuzzyMatch } from "@earendil-works/pi-tui";
 
-// 本模块移植 pi 1.1.0 原生会话选择器的查询语义
+// 本模块移植 pi 1.5.0 原生会话选择器的查询语义
 // （dist/modes/interactive/components/session-selector-search.js），
 // 使 /history 的模糊、精确短语与正则搜索行为与原生 /resume 保持一致。
+//
+// 1.5.0 起原生 /resume 改了两个关键点，1.1.0 的旧语义会误匹配：
+// 1. id 与消息正文只做精确子串匹配，只有名称和 cwd 参与模糊匹配。
+//    以前 /resume 搜 "1024" 会命中 UUID 里散落的 1、0、2、4。
+// 2. 每个字段单独匹配，token 不会跨字段边界拼凑命中。
+// 匹配分三层，层级差距远大于层内分数差，所以任何精确命中都排在模糊命中之前。
 
 export type SortMode = "threaded" | "recent" | "relevance";
 export type NameFilter = "all" | "named";
@@ -31,10 +37,108 @@ function normalizeWhitespaceLower(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-// 匹配范围与原生一致：会话 id、名称、全部 user/assistant 正文及工作目录。
-// model、provider 等元信息不属于搜索字段。
-function getSessionSearchText(session: SessionInfo): string {
-  return `${session.id} ${session.name ?? ""} ${session.allMessagesText} ${session.cwd}`;
+/** 匹配层级，数值越小越好：名称命中 → 文本精确命中 → 名称/cwd 模糊命中。 */
+const TIER_NAME = 0;
+const TIER_TEXT = 1;
+const TIER_FUZZY = 2;
+/** 层级权重：远大于层内任何分数，保证跨层时顺序由层级决定。 */
+const TIER_WEIGHT = 1_000_000;
+
+interface CachedMessageText {
+  /** 缓存对应的原文；allMessagesText 变化时缓存失效。 */
+  source: string;
+  lower: string;
+  normalized?: string;
+}
+
+/**
+ * 小写后的消息正文缓存。
+ * allMessagesText 可能有几 MB，每次按键重新 toLowerCase 会明显拖慢输入。
+ */
+const messageTextCache = new WeakMap<SessionInfo, CachedMessageText>();
+
+function getMessageText(session: SessionInfo): CachedMessageText {
+  let cached = messageTextCache.get(session);
+  if (!cached || cached.source !== session.allMessagesText) {
+    cached = { source: session.allMessagesText, lower: session.allMessagesText.toLowerCase() };
+    messageTextCache.set(session, cached);
+  }
+  return cached;
+}
+
+function getNormalizedMessageText(session: SessionInfo): string {
+  const cached = getMessageText(session);
+  cached.normalized ??= normalizeWhitespaceLower(cached.lower);
+  return cached.normalized;
+}
+
+function tierScore(tier: number, score = 0): number {
+  return tier * TIER_WEIGHT + score;
+}
+
+/**
+ * 精确（大小写不敏感）子串命中。
+ * 返回分数时带上命中位置，让相关性排序仍能区分“开头的命中”和“文末的命中”。
+ * 名称与 cwd 之外，id 和消息正文只走这一条路径：散落的字母是噪音，不算命中。
+ */
+function matchLiteralToken(session: SessionInfo, value: string): number | undefined {
+  const name = session.name?.toLowerCase() ?? "";
+  const nameIndex = name.indexOf(value);
+  if (nameIndex >= 0) return tierScore(TIER_NAME, nameIndex * 0.1);
+
+  const idIndex = session.id.toLowerCase().indexOf(value);
+  if (idIndex >= 0) return tierScore(TIER_TEXT, idIndex * 0.1);
+
+  const messageIndex = getMessageText(session).lower.indexOf(value);
+  if (messageIndex >= 0) return tierScore(TIER_TEXT, messageIndex * 0.1);
+
+  const cwdIndex = session.cwd.toLowerCase().indexOf(value);
+  if (cwdIndex >= 0) return tierScore(TIER_TEXT, cwdIndex * 0.1);
+
+  return undefined;
+}
+
+/** 普通 token：先试精确子串，落在名称或 cwd 里才退到模糊匹配。 */
+function matchFuzzyToken(session: SessionInfo, value: string): number | undefined {
+  const literal = matchLiteralToken(session, value.toLowerCase());
+  if (literal !== undefined) return literal;
+
+  let best: number | undefined;
+  for (const field of [session.name ?? "", session.cwd]) {
+    const result = fuzzyMatch(value, field);
+    if (result.matches && (best === undefined || result.score < best)) best = result.score;
+  }
+  return best === undefined ? undefined : tierScore(TIER_FUZZY, best);
+}
+
+/** 引号短语：两端都折叠空白后按原样子串匹配，不做逐字符模糊。 */
+function matchPhraseToken(session: SessionInfo, phrase: string): number | undefined {
+  const nameIndex = normalizeWhitespaceLower(session.name ?? "").indexOf(phrase);
+  if (nameIndex >= 0) return tierScore(TIER_NAME, nameIndex * 0.1);
+
+  const idIndex = session.id.toLowerCase().indexOf(phrase);
+  if (idIndex >= 0) return tierScore(TIER_TEXT, idIndex * 0.1);
+
+  const messageIndex = getNormalizedMessageText(session).indexOf(phrase);
+  if (messageIndex >= 0) return tierScore(TIER_TEXT, messageIndex * 0.1);
+
+  const cwdIndex = normalizeWhitespaceLower(session.cwd).indexOf(phrase);
+  if (cwdIndex >= 0) return tierScore(TIER_TEXT, cwdIndex * 0.1);
+
+  return undefined;
+}
+
+/** 正则逐字段测试：拼接后再 search 会让模式跨字段命中。 */
+function matchRegex(session: SessionInfo, regex: RegExp): number | undefined {
+  if (session.name) {
+    const match = regex.exec(session.name);
+    if (match) return tierScore(TIER_NAME, match.index * 0.1);
+  }
+  for (const text of [session.id, session.allMessagesText, session.cwd]) {
+    const match = regex.exec(text);
+    if (match) return tierScore(TIER_TEXT, match.index * 0.1);
+  }
+  return undefined;
 }
 
 export function hasSessionName(session: SessionInfo): boolean {
@@ -109,14 +213,10 @@ export function parseSearchQuery(query: string): ParsedSearchQuery {
 }
 
 export function matchSession(session: SessionInfo, parsed: ParsedSearchQuery): MatchResult {
-  const text = getSessionSearchText(session);
-
   if (parsed.mode === "regex") {
     if (!parsed.regex) return { matches: false, score: 0 };
-    const index = text.search(parsed.regex);
-    if (index < 0) return { matches: false, score: 0 };
-    // 匹配位置越靠前越相关。
-    return { matches: true, score: index * 0.1 };
+    const score = matchRegex(session, parsed.regex);
+    return score === undefined ? { matches: false, score: 0 } : { matches: true, score };
   }
 
   if (parsed.tokens.length === 0) {
@@ -124,20 +224,17 @@ export function matchSession(session: SessionInfo, parsed: ParsedSearchQuery): M
   }
 
   let totalScore = 0;
-  let normalizedText: string | null = null;
   for (const token of parsed.tokens) {
+    let score: number | undefined;
     if (token.kind === "phrase") {
-      if (normalizedText === null) normalizedText = normalizeWhitespaceLower(text);
       const phrase = normalizeWhitespaceLower(token.value);
       if (!phrase) continue;
-      const index = normalizedText.indexOf(phrase);
-      if (index < 0) return { matches: false, score: 0 };
-      totalScore += index * 0.1;
-      continue;
+      score = matchPhraseToken(session, phrase);
+    } else {
+      score = matchFuzzyToken(session, token.value);
     }
-    const result = fuzzyMatch(token.value, text);
-    if (!result.matches) return { matches: false, score: 0 };
-    totalScore += result.score;
+    if (score === undefined) return { matches: false, score: 0 };
+    totalScore += score;
   }
   return { matches: true, score: totalScore };
 }

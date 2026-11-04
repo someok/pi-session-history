@@ -449,3 +449,55 @@ test("中文与 emoji 查询结果在缩放和主题变化后仍可读且选中�
   host.press("\u001b");
   await command;
 });
+
+test("散落在 id 里的字母不算命中，模糊匹配只留在名称与工作目录", async (t) => {
+  const data = await world(t);
+  // id 里 1、0、2、4 分散出现但没有连续的 1024；名称与工作目录都不含数字。
+  await data.save({
+    id: "abc1def0ghi2jkl4mno", name: "Zenith", firstMessage: "Quarterly rollout checklist",
+    cwd: "/proj/scatter", activity: NOW - 60_000,
+  });
+  // z 只在名称里、q 只在工作目录里：拼成一条搜索文本时 "zq" 会跨字段凑出命中。
+  await data.save({
+    id: "zeta-queue-none", name: "Zeta notes", firstMessage: "Zeta request",
+    cwd: "/proj/queue", activity: NOW - 120_000,
+  });
+
+  const host = new HistoryHost({ ...data, rows: 20 });
+  t.after(() => host.close());
+  const command = host.open();
+  await host.waitFor((text) => text.includes("History (Current Folder)"));
+  host.press("\t");
+  await host.waitFor((text) => text.includes("Zenith") && text.includes("Zeta notes") && !text.includes("Loading"));
+
+  // 1.1.0 的旧语义会在这里命中第一条：fuzzyMatch 允许字符散落。
+  type(host, "1024");
+  assert.match(host.text(), /No sessions found/);
+
+  // 跨字段拼凑同样不算命中。
+  clearQuery(host);
+  type(host, "zq");
+  assert.match(host.text(), /No sessions found/);
+
+  // 名称仍然模糊匹配，字符散落合法。
+  clearQuery(host);
+  type(host, "znth");
+  assert.match(host.text(), /› Zenith/);
+  assert.doesNotMatch(host.text(), /Zeta notes/);
+
+  // 工作目录仍然模糊匹配。
+  clearQuery(host);
+  type(host, "prj");
+  assert.match(host.text(), /Zenith/);
+  assert.match(host.text(), /Zeta notes/);
+
+  // id 只做精确子串匹配。
+  clearQuery(host);
+  type(host, "abc1def0");
+  assert.match(host.text(), /› Zenith/);
+  assert.doesNotMatch(host.text(), /Zeta notes/);
+
+  host.press("\u001b");
+  await command;
+  assert.deepEqual(host.switches, []);
+});
